@@ -483,69 +483,59 @@ if (submit or refresh) and st.session_state.ticker:
                 # Add new prediction at the beginning of the list (newest first)
                 st.session_state.predictions.insert(0, new_prediction)
                 
-                # Update all predictions with results
-                # We iterate through a copy to avoid issues if we needed to modify the list structure (though we are modifying objects)
-                for i, pred in enumerate(st.session_state.predictions):
-                    # Only check if pending or wait message
-                    if any(pred.get(f"t+{k} Result") not in ["Correct", "Incorrect", "Neutral", "Error"] for k in [1, 5, 30]):
-                        updated_pred = check_prediction_result(pred, pred['Ticker'])
-                        st.session_state.predictions[i] = updated_pred
-                
-                # Display predictions table
-                st.subheader("Predictions")
-                if st.session_state.predictions:
-                    # Create a display dataframe (hide internal columns)
-                    predictions_df = pd.DataFrame(st.session_state.predictions)
-                    
-                    # Filter columns to show
-                    cols_to_show = [
-                        "Ticker", "Timestamp", "Identified Candlestick Patterns",
-                        "t+1 Prediction", "t+5 Prediction", "t+30 Prediction",
-                        "t+1 Result", "t+5 Result", "t+30 Result"
-                    ]
-                    
-                    # Ensure columns exist (for old dummy data compatibility)
-                    available_cols = [c for c in cols_to_show if c in predictions_df.columns]
-                    display_df = predictions_df[available_cols]
-                    
-                    # Apply styling
-                    def highlight_results(val):
-                        if isinstance(val, str):
-                            if "✅" in val:
-                                return 'background-color: #d4edda; color: #155724' # Green
-                            elif "❌" in val:
-                                return 'background-color: #f8d7da; color: #721c24' # Red
-                            elif "⏳" in val:
-                                return 'background-color: #fff3cd; color: #856404' # Yellow
-                        return ''
+@st.fragment(run_every=5)
+def display_predictions():
+    """Display and verify predictions with auto-refresh."""
+    # Verification Logic
+    if 'predictions' in st.session_state and st.session_state.predictions:
+        # Update all predictions with results
+        for i, pred in enumerate(st.session_state.predictions):
+            # Only check if pending or wait message
+            if any(pred.get(f"t+{k} Result") not in ["✅ Correct", "❌ Incorrect", "Neutral", "Error"] for k in [1, 5, 30]):
+                updated_pred = check_prediction_result(pred, pred['Ticker'])
+                st.session_state.predictions[i] = updated_pred
 
-                    # Apply style to Result columns
-                    result_cols = [c for c in available_cols if "Result" in c]
-                    styled_df = display_df.style.map(highlight_results, subset=result_cols)
-                    
-                    st.dataframe(styled_df, use_container_width=True, hide_index=True)
-                else:
-                    st.info("No predictions yet. Click Submit or Refresh to generate predictions.")
+    # Display Logic
+    st.subheader("Predictions")
+    if 'predictions' in st.session_state and st.session_state.predictions:
+        # Create a display dataframe (hide internal columns)
+        predictions_df = pd.DataFrame(st.session_state.predictions)
+        
+        # Filter columns to show
+        cols_to_show = [
+            "Ticker", "Timestamp", "Identified Candlestick Patterns",
+            "t+1 Prediction", "t+5 Prediction", "t+30 Prediction",
+            "t+1 Result", "t+5 Result", "t+30 Result"
+        ]
+        
+        # Ensure columns exist (for old dummy data compatibility)
+        available_cols = [c for c in cols_to_show if c in predictions_df.columns]
+        display_df = predictions_df[available_cols]
+        
+        # Apply styling
+        def highlight_results(val):
+            if isinstance(val, str):
+                if "✅" in val:
+                    return 'background-color: #d4edda; color: #155724' # Green
+                elif "❌" in val:
+                    return 'background-color: #f8d7da; color: #721c24' # Red
+                elif "⏳" in val:
+                    return 'background-color: #fff3cd; color: #856404' # Yellow
+            return ''
 
-# Auto-refresh logic
-# Check if there are any pending predictions that need verification
-if 'predictions' in st.session_state and st.session_state.predictions:
-    has_pending = False
-    for pred in st.session_state.predictions:
-        # Check if any result column is not final
-        # Final states: "✅ Correct", "❌ Incorrect", "Neutral", "Error", "Data Unavailable" (though we try to avoid this now)
-        # Pending/Wait states: "Pending", "⏳ Wait until..."
-        for k in [1, 5, 30]:
-            res = pred.get(f"t+{k} Result", "")
-            if "✅" not in res and "❌" not in res and "Neutral" not in res and "Error" not in res and "Data Unavailable" not in res:
-                has_pending = True
-                break
-        if has_pending:
-            break
-    
-    if has_pending:
-        time.sleep(5)
-        st.rerun()
+        # Apply style to Result columns
+        result_cols = [c for c in available_cols if "Result" in c]
+        styled_df = display_df.style.map(highlight_results, subset=result_cols)
+        
+        st.dataframe(styled_df, use_container_width=True, hide_index=True)
+    else:
+        st.info("No predictions yet. Click Submit or Refresh to generate predictions.")
+
+# Call the fragment
+display_predictions()
+
+        except Exception as e:
+            st.exception(f"An error occurred: {e}")
 
         except Exception as e:
             st.exception(f"An error occurred: {e}")
