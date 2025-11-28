@@ -283,7 +283,7 @@ def check_prediction_result(prediction, ticker_symbol):
 
     return prediction
 
-@st.fragment(run_every=5)
+@st.fragment(run_every=30)
 def display_predictions():
     """Display and verify predictions with auto-refresh."""
     # Verification Logic
