@@ -166,14 +166,16 @@ def check_prediction_result(prediction, ticker_symbol):
         if 'Last Candle Time' not in prediction:
             return prediction
             
-        # Parse the stored time (which includes timezone info from yfinance usually)
+        # Parse the stored time
         last_candle_time = pd.to_datetime(prediction['Last Candle Time'])
         initial_close = prediction['Initial Close']
         
-        # Convert last_candle_time to local system timezone for consistency with datetime.now()
-        # This ensures "Wait until..." messages match the user's wall clock
-        if last_candle_time.tzinfo is not None:
-            last_candle_time = last_candle_time.astimezone(None) # None = local timezone
+        # Ensure last_candle_time is timezone-aware (UTC is best for comparison)
+        if last_candle_time.tzinfo is None:
+            # If naive, assume it was created in local time or UTC? 
+            # yfinance usually returns aware timestamps. If stringified, it might have lost it or kept offset.
+            # Let's assume it's consistent with what yfinance gave us.
+            pass
         
         # Define horizons in minutes
         horizons = {
@@ -190,19 +192,20 @@ def check_prediction_result(prediction, ticker_symbol):
             pred_key = f"{horizon_name} Prediction"
             
             # If already verified, skip
-            if prediction[result_key] in ["Correct", "Incorrect", "Neutral"]:
+            if prediction[result_key] in ["✅ Correct", "❌ Incorrect", "Neutral"]:
                 continue
                 
             target_time = last_candle_time + timedelta(minutes=minutes)
             
-            # Current time (naive, local)
-            now = dt.now()
-            # If target_time is aware, make now aware (local) or make target_time naive (local)
-            # Since we converted last_candle_time to local (astimezone(None)), it might still be aware.
-            # Let's ensure we compare apples to apples.
-            if target_time.tzinfo is not None:
-                # target_time is aware (local), so we need aware now
-                now = dt.now().astimezone()
+            # Current time (aware)
+            now = dt.now().astimezone()
+            
+            # Ensure target_time is comparable to now
+            if target_time.tzinfo is None:
+                # If target is naive, assume local for comparison with now
+                target_time_aware = target_time.replace(tzinfo=now.tzinfo)
+            else:
+                target_time_aware = target_time
             
             # Define wait times (when to allow checking)
             # We check 1 minute after the candle closes to ensure data availability
@@ -212,7 +215,7 @@ def check_prediction_result(prediction, ticker_symbol):
                 't+30': 31  # 30 min horizon + 1 min buffer
             }
             
-            check_time = last_candle_time + timedelta(minutes=wait_delays[horizon_name])
+            check_time = target_time_aware + timedelta(minutes=1) # Wait 1 min after target time
             
             # If current time is before the check time, tell user to wait
             if check_time > now:
@@ -223,37 +226,66 @@ def check_prediction_result(prediction, ticker_symbol):
             
             # Target time is in the past, try to fetch data
             try:
-                # Fetch 1m data for the last day (more robust than specific start/end times)
+                # Fetch 1m data for the last day (keeping period="1d" as requested)
                 df = stock.history(period="1d", interval="1m")
                 
-                # If 1d is empty, try 5d (e.g. over weekend)
                 if df.empty:
+                    # Try 5d if 1d is empty (e.g. weekend/holiday)
                     df = stock.history(period="5d", interval="1m")
                 
                 if df.empty:
-                    # Instead of "Data Unavailable", wait 1 more minute and try again
+                    # Still empty
                     next_retry = dt.now() + timedelta(minutes=1)
-                    prediction[result_key] = f"⏳ Wait until {next_retry.strftime('%H:%M')}"
+                    prediction[result_key] = f"⏳ No data yet, retrying..."
                     continue
                 
-                # Convert df index to local timezone to match target_time
-                df.index = df.index.tz_convert(None) if target_time.tzinfo is None else df.index.tz_convert(target_time.tzinfo)
+                # Normalize timezones for comparison
+                # We want to find the row in df where index == target_time
                 
-                # Find the candle at target_time (or very close to it)
+                # If df index is aware and target_time is aware, we can compare directly if we handle offsets
+                # Best way is to convert both to UTC
+                
+                if df.index.tz is not None:
+                    df_index_utc = df.index.tz_convert('UTC')
+                else:
+                    # If df index is naive, assume it's local/market time? yfinance is usually aware.
+                    # If naive, localize to UTC (assuming input was UTC) or just keep naive if target is naive
+                    df_index_utc = df.index
+                    
+                if target_time.tzinfo is not None:
+                    target_time_utc = target_time.astimezone(datetime.timezone.utc)
+                else:
+                    target_time_utc = target_time
+                
+                # Find the candle at target_time
                 # We look for the exact minute
                 target_candle = None
                 
-                # Iterate to find exact match
+                # Robust search: look for exact match or very close match
+                # Since we are dealing with 1m candles, we expect an entry at target_time (start of the minute)
+                
+                # Convert target_time_utc to the same timezone as df.index if possible for easier debugging
+                # But comparing UTC timestamps is safest
+                
+                # Let's iterate and compare timestamps
                 for idx, row in df.iterrows():
-                    # Compare down to the minute
-                    if idx.replace(second=0, microsecond=0) == target_time.replace(second=0, microsecond=0):
+                    # Convert idx to UTC for comparison
+                    if idx.tzinfo is not None:
+                        idx_utc = idx.astimezone(datetime.timezone.utc)
+                    else:
+                        idx_utc = idx
+                        
+                    # Check if timestamps match (ignoring seconds/microseconds)
+                    # We use a small tolerance or exact minute match
+                    if abs((idx_utc - target_time_utc).total_seconds()) < 30: # Within 30 seconds
                         target_candle = row
                         break
                 
                 if target_candle is None:
-                    # If exact match not found, maybe it's a gap? Wait 1 more minute and try again
-                    next_retry = dt.now() + timedelta(minutes=1)
-                    prediction[result_key] = f"⏳ Wait until {next_retry.strftime('%H:%M')}"
+                    # If exact match not found, it might be a gap.
+                    # If enough time has passed (e.g. > 10 mins after target), maybe we can assume it's missing?
+                    # For now, just wait.
+                    prediction[result_key] = f"⏳ Data pending..."
                     continue
                 
                 target_close = float(target_candle['Close'])
@@ -545,19 +577,148 @@ def plot_candlestick(data, ticker):
         st.error(f"Error creating candlestick chart: {e}")
         return None
 
+# Top 30 US stocks by volume (approximate list for "Feeling Lucky")
+TOP_30_STOCKS = [
+    "NVDA", "TSLA", "AAPL", "AMD", "AMZN", "MSFT", "META", "GOOGL", "GOOG", "INTC",
+    "COIN", "MARA", "PLTR", "SOFI", "BAC", "F", "T", "KVUE", "PFE", "VALE",
+    "AAL", "CCL", "NCLH", "UBER", "LYFT", "SNAP", "RIVN", "LCID", "NIO", "XPEV"
+]
+
+def process_ticker(ticker, render_chart=True):
+    """
+    Process a single ticker: fetch data, predict, and optionally render chart.
+    Returns True if successful, False otherwise.
+    """
+    try:
+        # Retrieve stock data
+        stock = yf.Ticker(ticker)
+        
+        # Get last 30 minutes of data with 1-minute intervals
+        history = get_last_30_min_data(stock)
+        
+        if not history.empty:
+            # Display candlestick chart if requested
+            if render_chart:
+                info = stock.info
+                st.subheader(f"{ticker} - {info.get('longName', 'N/A')}")
+                
+                fig = plot_candlestick(history, ticker)
+                if fig:
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                # Show data info
+                st.caption(f"Showing {len(history)} candles from {history.index[0]} to {history.index[-1]}")
+
+            # Add a new prediction row
+            # Load model
+            model, cdl_labels = load_model()
+            
+            if model:
+                # Generate image for prediction
+                img = generate_prediction_image(history)
+                
+                # Preprocess image for model
+                img_array = np.array(img, dtype=np.float32) / 255.0
+                img_batch = np.expand_dims(img_array, axis=0) # Add batch dimension
+                
+                # Run prediction
+                predictions = model.predict(img_batch, verbose=0) # verbose=0 to avoid stdout spam
+                cdl_pred, price_pred = predictions
+                
+                # Process CDL patterns
+                # Get top 3 patterns by probability
+                top_k = 3
+                top_indices = np.argsort(cdl_pred[0])[-top_k:][::-1]
+                
+                detected_patterns = []
+                for i in top_indices:
+                    prob = cdl_pred[0][i]
+                    # Only show if probability is somewhat significant (e.g. > 0.1) to avoid noise
+                    if prob > 0.1:
+                        detected_patterns.append(f"{cdl_labels[i]} ({prob:.2f})")
+                
+                if detected_patterns:
+                    patterns_str = ", ".join(detected_patterns)
+                else:
+                    patterns_str = "None (Highest: {:.2f})".format(np.max(cdl_pred[0]))
+                    
+                # Process Price Directions
+                # Output: [next1_up, next1_down, next5_up, next5_down, next30_up, next30_down]
+                def get_direction(up_prob, down_prob):
+                    if up_prob > down_prob and up_prob > 0.5:
+                        return "Up"
+                    elif down_prob > up_prob and down_prob > 0.5:
+                        return "Down"
+                    else:
+                        return "Neutral"
+                        
+                t1_pred = get_direction(price_pred[0][0], price_pred[0][1])
+                t5_pred = get_direction(price_pred[0][2], price_pred[0][3])
+                t30_pred = get_direction(price_pred[0][4], price_pred[0][5])
+                
+                # Get initial close and time for verification
+                last_candle = history.iloc[-1]
+                initial_close = float(last_candle['Close'])
+                last_candle_time = history.index[-1]
+                
+                # Create data for new prediction
+                new_prediction = {
+                    "Ticker": ticker,
+                    "Timestamp": dt.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "Last Candle Time": str(last_candle_time),
+                    "Initial Close": initial_close,
+                    "Identified Candlestick Patterns": patterns_str,
+                    "t+1 Prediction": t1_pred,
+                    "t+5 Prediction": t5_pred,
+                    "t+30 Prediction": t30_pred,
+                    "t+1 Result": "Pending",
+                    "t+5 Result": "Pending",
+                    "t+30 Result": "Pending"
+                }
+            else:
+                st.error("Model could not be loaded. Using dummy data.")
+                # Fallback to dummy data if model fails
+                new_prediction = {
+                    "Ticker": ticker,
+                    "Timestamp": dt.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "Last Candle Time": str(dt.now()), # Dummy
+                    "Initial Close": 0.0, # Dummy
+                    "Identified Candlestick Patterns": "Error",
+                    "t+1 Prediction": "Error",
+                    "t+5 Prediction": "Error",
+                    "t+30 Prediction": "Error",
+                    "t+1 Result": "Error",
+                    "t+5 Result": "Error",
+                    "t+30 Result": "Error"
+                }
+            
+            # Add new prediction at the beginning of the list (newest first)
+            st.session_state.predictions.insert(0, new_prediction)
+            return True
+        else:
+            if render_chart:
+                st.warning(f"No recent 1-minute interval data available for {ticker}.")
+            return False
+            
+    except Exception as e:
+        if render_chart:
+            st.exception(f"An error occurred with {ticker}: {e}")
+        print(f"Error processing {ticker}: {e}")
+        return False
+
 # Main app UI
 st.title("Financial Analysis")
 
 # Ticker input and buttons in the main area
-col_ticker, col_submit, col_refresh = st.columns([3, 1, 1])
+col_ticker, col_submit, col_lucky = st.columns([3, 1, 1])
 with col_ticker:
     ticker_input = st.text_input("Enter a stock ticker (e.g. AAPL)", value=st.session_state.ticker, label_visibility="collapsed", placeholder="Enter stock ticker (e.g. AAPL)")
 
 with col_submit:
     submit = st.button("Submit", width="stretch")
 
-with col_refresh:
-    refresh = st.button("Refresh", width="stretch")
+with col_lucky:
+    lucky = st.button("Feeling Lucky", width="stretch")
 
 # Handle button clicks
 # Handle ticker updates and button clicks
@@ -569,126 +730,51 @@ if clean_input and clean_input != st.session_state.ticker:
     st.session_state.ticker = clean_input
     ticker_changed = True
 
-# Trigger analysis if Submit, Refresh, or Ticker Changed
-if (submit or refresh or ticker_changed) and st.session_state.ticker:
+# 1. Auto-load AAPL on first run
+if 'first_run' not in st.session_state:
+    st.session_state.first_run = True
+
+if st.session_state.first_run:
+    st.session_state.first_run = False
+    with st.spinner('Performing initial analysis for AAPL...', show_time=True):
+        process_ticker('AAPL', render_chart=True)
+
+# 2. Submit or Ticker Changed
+if (submit or ticker_changed) and st.session_state.ticker:
     ticker = st.session_state.ticker
-    
     if not ticker.strip():
         st.error("Please provide a valid stock ticker.")
     else:
-        try:
-            with st.spinner('Fetching data...', show_time=True):
-                # Retrieve stock data
-                stock = yf.Ticker(ticker)
-                info = stock.info
+        with st.spinner(f'Analyzing {ticker}...', show_time=True):
+            process_ticker(ticker, render_chart=True)
 
-                st.subheader(f"{ticker} - {info.get('longName', 'N/A')}")
-
-                # Get last 30 minutes of data with 1-minute intervals
-                history = get_last_30_min_data(stock)
-                
-                if not history.empty:
-                    # Display candlestick chart
-                    fig = plot_candlestick(history, ticker)
-                    if fig:
-                        st.plotly_chart(fig, use_container_width=True)
-                    
-                    # Show data info
-                    st.caption(f"Showing {len(history)} candles from {history.index[0]} to {history.index[-1]}")
-
-                    # Add a new prediction row
-                    from datetime import datetime
-                    
-                    # Load model
-                    model, cdl_labels = load_model()
-                    
-                    if model:
-                        # Generate image for prediction
-                        img = generate_prediction_image(history)
-                        
-                        # Preprocess image for model
-                        img_array = np.array(img, dtype=np.float32) / 255.0
-                        img_batch = np.expand_dims(img_array, axis=0) # Add batch dimension
-                        
-                        # Run prediction
-                        predictions = model.predict(img_batch)
-                        cdl_pred, price_pred = predictions
-                        
-                        # Process CDL patterns
-                        # Get top 3 patterns by probability
-                        top_k = 3
-                        top_indices = np.argsort(cdl_pred[0])[-top_k:][::-1]
-                        
-                        detected_patterns = []
-                        for i in top_indices:
-                            prob = cdl_pred[0][i]
-                            # Only show if probability is somewhat significant (e.g. > 0.1) to avoid noise
-                            if prob > 0.1:
-                                detected_patterns.append(f"{cdl_labels[i]} ({prob:.2f})")
-                        
-                        if detected_patterns:
-                            patterns_str = ", ".join(detected_patterns)
-                        else:
-                            patterns_str = "None (Highest: {:.2f})".format(np.max(cdl_pred[0]))
-                            
-                        # Process Price Directions
-                        # Output: [next1_up, next1_down, next5_up, next5_down, next30_up, next30_down]
-                        def get_direction(up_prob, down_prob):
-                            if up_prob > down_prob and up_prob > 0.5:
-                                return "Up"
-                            elif down_prob > up_prob and down_prob > 0.5:
-                                return "Down"
-                            else:
-                                return "Neutral"
-                                
-                        t1_pred = get_direction(price_pred[0][0], price_pred[0][1])
-                        t5_pred = get_direction(price_pred[0][2], price_pred[0][3])
-                        t30_pred = get_direction(price_pred[0][4], price_pred[0][5])
-                        
-                        # Get initial close and time for verification
-                        last_candle = history.iloc[-1]
-                        initial_close = float(last_candle['Close'])
-                        last_candle_time = history.index[-1]
-                        
-                        # Create data for new prediction
-                        new_prediction = {
-                            "Ticker": ticker,
-                            "Timestamp": dt.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            "Last Candle Time": str(last_candle_time),
-                            "Initial Close": initial_close,
-                            "Identified Candlestick Patterns": patterns_str,
-                            "t+1 Prediction": t1_pred,
-                            "t+5 Prediction": t5_pred,
-                            "t+30 Prediction": t30_pred,
-                            "t+1 Result": "Pending",
-                            "t+5 Result": "Pending",
-                            "t+30 Result": "Pending"
-                        }
-                    else:
-                        st.error("Model could not be loaded. Using dummy data.")
-                        # Fallback to dummy data if model fails
-                        import random
-                        new_prediction = {
-                            "Ticker": ticker,
-                            "Timestamp": dt.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            "Last Candle Time": str(dt.now()), # Dummy
-                            "Initial Close": 0.0, # Dummy
-                            "Identified Candlestick Patterns": "Error",
-                            "t+1 Prediction": "Error",
-                            "t+5 Prediction": "Error",
-                            "t+30 Prediction": "Error",
-                            "t+1 Result": "Error",
-                            "t+5 Result": "Error",
-                            "t+30 Result": "Error"
-                        }
-                    
-                    # Add new prediction at the beginning of the list (newest first)
-                    st.session_state.predictions.insert(0, new_prediction)
-                else:
-                    st.warning("No recent 1-minute interval data available for this ticker. The market may be closed or this ticker may not support 1-minute data.")
-                
-        except Exception as e:
-            st.exception(f"An error occurred: {e}")
+# 3. Feeling Lucky (Batch Processing)
+if lucky:
+    # Use the first stock in the list for the chart
+    first_ticker = TOP_30_STOCKS[0]
+    st.session_state.ticker = first_ticker # Update session state ticker
+    
+    # Progress bar and status
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    total_stocks = len(TOP_30_STOCKS)
+    
+    for i, ticker in enumerate(TOP_30_STOCKS):
+        status_text.text(f"Processing {i+1}/{total_stocks}: {ticker}")
+        
+        # Render chart only for the first one
+        should_render = (i == 0)
+        
+        process_ticker(ticker, render_chart=should_render)
+        
+        # Update progress
+        progress_bar.progress((i + 1) / total_stocks)
+    
+    status_text.text("Batch processing complete!")
+    time.sleep(1) # Let user see completion message
+    status_text.empty()
+    progress_bar.empty()
 
 # Call the fragment always, outside the conditional blocks
 display_predictions()
