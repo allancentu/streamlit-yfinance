@@ -282,10 +282,17 @@ def check_prediction_result(prediction, ticker_symbol):
                         break
                 
                 if target_candle is None:
-                    # If exact match not found, it might be a gap.
+                    # If exact match not found, it might be a gap or data delay.
+                    # Check the latest available time in df to see if we are just behind
+                    latest_data_time = df.index[-1]
+                    if latest_data_time.tzinfo is not None:
+                        latest_str = latest_data_time.astimezone(None).strftime('%H:%M')
+                    else:
+                        latest_str = latest_data_time.strftime('%H:%M')
+                        
                     # If enough time has passed (e.g. > 10 mins after target), maybe we can assume it's missing?
                     # For now, just wait.
-                    prediction[result_key] = f"⏳ Data pending..."
+                    prediction[result_key] = f"⏳ Data pending... (Latest: {latest_str})"
                     continue
                 
                 target_close = float(target_candle['Close'])
