@@ -153,140 +153,160 @@ def generate_prediction_image(data):
     
     return img
 
-    return img
-
-def check_prediction_result(prediction, ticker_symbol):
+def batch_update_predictions(predictions):
     """
-    Verify if a prediction was correct based on subsequent market data.
-    Returns the updated prediction dictionary.
+    Batch update all pending predictions using a single yfinance download call.
+    Returns the updated list of predictions.
     """
-    # Parse timestamps
-    try:
-        # We stored the last candle time as a string, need to parse it back
-        if 'Last Candle Time' not in prediction:
-            return prediction
-            
-        # Parse the stored time (which includes timezone info from yfinance usually)
-        last_candle_time = pd.to_datetime(prediction['Last Candle Time'])
-        initial_close = prediction['Initial Close']
+    # Identify predictions that need checking
+    pending_indices = []
+    tickers_to_fetch = set()
+    
+    # Define horizons in minutes
+    horizons = {'t+1': 1, 't+5': 5, 't+30': 30}
+    wait_delays = {'t+1': 2, 't+5': 6, 't+30': 31}
+    
+    now = dt.now().astimezone()
+    
+    for i, pred in enumerate(predictions):
+        needs_update = False
         
-        # Convert last_candle_time to local system timezone for consistency with datetime.now()
-        # This ensures "Wait until..." messages match the user's wall clock
-        if last_candle_time.tzinfo is not None:
-            last_candle_time = last_candle_time.astimezone(None) # None = local timezone
-        
-        # Define horizons in minutes
-        horizons = {
-            't+1': 1,
-            't+5': 5,
-            't+30': 30
-        }
-        
-        stock = yf.Ticker(ticker_symbol)
-        
-        # Check each horizon
-        for horizon_name, minutes in horizons.items():
-            result_key = f"{horizon_name} Result"
-            pred_key = f"{horizon_name} Prediction"
-            
-            # If already verified, skip
-            if prediction[result_key] in ["Correct", "Incorrect", "Neutral"]:
-                continue
-                
-            target_time = last_candle_time + timedelta(minutes=minutes)
-            
-            # Current time (naive, local)
-            now = dt.now()
-            # If target_time is aware, make now aware (local) or make target_time naive (local)
-            # Since we converted last_candle_time to local (astimezone(None)), it might still be aware.
-            # Let's ensure we compare apples to apples.
-            if target_time.tzinfo is not None:
-                # target_time is aware (local), so we need aware now
-                now = dt.now().astimezone()
-            
-            # Define wait times (when to allow checking)
-            # We check 1 minute after the candle closes to ensure data availability
-            wait_delays = {
-                't+1': 2,   # 1 min candle + 1 min buffer
-                't+5': 6,   # 5 min horizon + 1 min buffer
-                't+30': 31  # 30 min horizon + 1 min buffer
-            }
-            
-            check_time = last_candle_time + timedelta(minutes=wait_delays[horizon_name])
-            
-            # If current time is before the check time, tell user to wait
-            if check_time > now:
-                # Format check time for display
-                wait_time_str = check_time.strftime("%H:%M")
-                prediction[result_key] = f"⏳ Wait until {wait_time_str}"
-                continue
-            
-            # Target time is in the past, try to fetch data
-            try:
-                # Fetch 1m data for the last day (more robust than specific start/end times)
-                df = stock.history(period="1d", interval="1m")
-                
-                # If 1d is empty, try 5d (e.g. over weekend)
-                if df.empty:
-                    df = stock.history(period="5d", interval="1m")
-                
-                if df.empty:
-                    # Instead of "Data Unavailable", wait 1 more minute and try again
-                    next_retry = dt.now() + timedelta(minutes=1)
-                    prediction[result_key] = f"⏳ Wait until {next_retry.strftime('%H:%M')}"
-                    continue
-                
-                # Convert df index to local timezone to match target_time
-                df.index = df.index.tz_convert(None) if target_time.tzinfo is None else df.index.tz_convert(target_time.tzinfo)
-                
-                # Find the candle at target_time (or very close to it)
-                # We look for the exact minute
-                target_candle = None
-                
-                # Iterate to find exact match
-                for idx, row in df.iterrows():
-                    # Compare down to the minute
-                    if idx.replace(second=0, microsecond=0) == target_time.replace(second=0, microsecond=0):
-                        target_candle = row
-                        break
-                
-                if target_candle is None:
-                    # If exact match not found, maybe it's a gap? Wait 1 more minute and try again
-                    next_retry = dt.now() + timedelta(minutes=1)
-                    prediction[result_key] = f"⏳ Wait until {next_retry.strftime('%H:%M')}"
-                    continue
-                
-                target_close = float(target_candle['Close'])
-                
-                # Determine actual movement
-                if target_close > initial_close:
-                    actual_direction = "Up"
-                elif target_close < initial_close:
-                    actual_direction = "Down"
+        # Check if any result is pending or waiting
+        for h in horizons:
+            res = pred.get(f"{h} Result")
+            if res not in ["✅ Correct", "❌ Incorrect", "Neutral", "Error"]:
+                # Check if it's time to update
+                last_candle_time = pd.to_datetime(pred['Last Candle Time'])
+                if last_candle_time.tzinfo is None:
+                    last_candle_time = last_candle_time.tz_localize(now.tzinfo)
                 else:
-                    actual_direction = "Neutral"
-                
-                # Compare with prediction
-                predicted_direction = prediction[pred_key]
-                
-                if predicted_direction == actual_direction:
-                    prediction[result_key] = "✅ Correct"
-                else:
-                    prediction[result_key] = "❌ Incorrect"
-                
-                # Store actual direction for metrics calculation
-                prediction[f"{horizon_name} Actual"] = actual_direction
+                    last_candle_time = last_candle_time.astimezone(now.tzinfo)
                     
-            except Exception as e:
-                prediction[result_key] = "Error checking"
-                print(f"Error checking result for {horizon_name}: {e}")
+                check_time = last_candle_time + timedelta(minutes=wait_delays[h])
                 
-    except Exception as e:
-        print(f"Error in check_prediction_result: {e}")
+                if now >= check_time:
+                    needs_update = True
+                else:
+                    # Update wait message
+                    wait_time_str = check_time.strftime("%H:%M")
+                    pred[f"{h} Result"] = f"⏳ Wait until {wait_time_str}"
         
-    return prediction
+        if needs_update:
+            pending_indices.append(i)
+            tickers_to_fetch.add(pred['Ticker'])
+            
+    if not tickers_to_fetch:
+        return predictions
+        
+    try:
+        # Batch download data for all needed tickers
+        # Fetch enough data to cover the longest horizon (30m) + buffer
+        # 5 days is safe to cover weekends/holidays
+        print(f"Batch fetching for: {tickers_to_fetch}")
+        data = yf.download(tickers=list(tickers_to_fetch), period="5d", interval="1m", group_by='ticker', progress=False)
+        
+        # Handle single ticker case (columns are not MultiIndex if single ticker)
+        if len(tickers_to_fetch) == 1:
+            # Reformat to match MultiIndex structure for consistent processing: data[Ticker][Close]
+            ticker = list(tickers_to_fetch)[0]
+            # Make it a MultiIndex with ticker as top level
+            data.columns = pd.MultiIndex.from_product([[ticker], data.columns])
+            
+        # Process each pending prediction
+        for i in pending_indices:
+            pred = predictions[i]
+            ticker = pred['Ticker']
+            
+            if ticker not in data.columns.levels[0]:
+                continue
+                
+            ticker_data = data[ticker].dropna()
+            if ticker_data.empty:
+                continue
+                
+            # Ensure index is timezone aware and matches system time
+            if ticker_data.index.tz is None:
+                 ticker_data.index = ticker_data.index.tz_localize(now.tzinfo)
+            else:
+                 ticker_data.index = ticker_data.index.tz_convert(now.tzinfo)
+            
+            last_candle_time = pd.to_datetime(pred['Last Candle Time'])
+            if last_candle_time.tzinfo is None:
+                last_candle_time = last_candle_time.tz_localize(now.tzinfo)
+            else:
+                last_candle_time = last_candle_time.astimezone(now.tzinfo)
+            
+            initial_close = pred['Initial Close']
+            
+            for h, minutes in horizons.items():
+                result_key = f"{h} Result"
+                pred_key = f"{h} Prediction"
+                
+                # Skip if already final
+                if pred[result_key] in ["✅ Correct", "❌ Incorrect", "Neutral"]:
+                    continue
+                    
+                target_time = last_candle_time + timedelta(minutes=minutes)
+                
+                # Check if we have data for this target time
+                # Look for exact match or closest future match within small window?
+                # Strict exact match on minute is best for 1m data
+                
+                # Find candle at target_time
+                # Truncate to minute for comparison
+                target_minute = target_time.replace(second=0, microsecond=0)
+                
+                # Find row with this index
+                # We need to be careful with floating point comparisons if using exact timestamp match
+                # Let's use string match or close enough
+                
+                # Filter data to find the specific minute
+                # Using reindex or loc might raise error if missing, so manual search or robust lookup
+                
+                # Robust lookup: find index closest to target_minute but equal to it
+                # Since we have 1m interval, we can just look for the index
+                
+                try:
+                    # Round index to minutes for robust comparison
+                    # Create a temporary series of rounded times
+                    rounded_index = ticker_data.index.floor('min')
+                    
+                    if target_minute in rounded_index:
+                        # Get the row
+                        # Use the original index corresponding to the rounded time
+                        loc = rounded_index.get_loc(target_minute)
+                        # If multiple (shouldn't happen with unique index), take first
+                        if isinstance(loc, slice) or isinstance(loc, np.ndarray):
+                            target_candle = ticker_data.iloc[loc].iloc[0]
+                        else:
+                            target_candle = ticker_data.iloc[loc]
+                            
+                        target_close = float(target_candle['Close'])
+                        
+                        # Determine direction
+                        if target_close > initial_close:
+                            actual = "Up"
+                        elif target_close < initial_close:
+                            actual = "Down"
+                        else:
+                            actual = "Neutral"
+                            
+                        pred[f"{h} Actual"] = actual
+                        
+                        predicted = pred[pred_key]
+                        if predicted == actual:
+                            pred[result_key] = "✅ Correct"
+                        else:
+                            pred[result_key] = "❌ Incorrect"
+                            
+                except Exception as e:
+                    print(f"Error verification {ticker} {h}: {e}")
+                    continue
 
-    return prediction
+    except Exception as e:
+        print(f"Batch update error: {e}")
+        
+    return predictions
 
 def calculate_metrics(predictions):
     """Calculate comprehensive performance metrics."""
@@ -392,14 +412,9 @@ def calculate_metrics(predictions):
 @st.fragment(run_every=30)
 def display_predictions():
     """Display and verify predictions with auto-refresh."""
-    # Verification Logic
+    # Verification Logic (Batch Update)
     if 'predictions' in st.session_state and st.session_state.predictions:
-        # Update all predictions with results
-        for i, pred in enumerate(st.session_state.predictions):
-            # Only check if pending or wait message
-            if any(pred.get(f"t+{k} Result") not in ["✅ Correct", "❌ Incorrect", "Neutral", "Error"] for k in [1, 5, 30]):
-                updated_pred = check_prediction_result(pred, pred['Ticker'])
-                st.session_state.predictions[i] = updated_pred
+        st.session_state.predictions = batch_update_predictions(st.session_state.predictions)
 
     # Display Logic
     st.subheader("Predictions")
@@ -481,7 +496,7 @@ def display_predictions():
             with tab_t30:
                 display_horizon_metrics(30)
     else:
-        st.info("No predictions yet. Click Submit or Refresh to generate predictions.")
+        st.info("No predictions yet. Click Run Prediction to generate predictions.")
 
 # Streamlit app details
 st.set_page_config(page_title="Financial Analysis", layout="wide")
@@ -549,17 +564,13 @@ def plot_candlestick(data, ticker):
 st.title("Financial Analysis")
 
 # Ticker input and buttons in the main area
-col_ticker, col_submit, col_refresh = st.columns([3, 1, 1])
+col_ticker, col_submit = st.columns([4, 1])
 with col_ticker:
     ticker_input = st.text_input("Enter a stock ticker (e.g. AAPL)", value=st.session_state.ticker, label_visibility="collapsed", placeholder="Enter stock ticker (e.g. AAPL)")
 
 with col_submit:
-    submit = st.button("Submit", width="stretch")
+    submit = st.button("Run Prediction", width="stretch")
 
-with col_refresh:
-    refresh = st.button("Refresh", width="stretch")
-
-# Handle button clicks
 # Handle ticker updates and button clicks
 ticker_changed = False
 clean_input = ticker_input.strip().upper()
@@ -569,8 +580,8 @@ if clean_input and clean_input != st.session_state.ticker:
     st.session_state.ticker = clean_input
     ticker_changed = True
 
-# Trigger analysis if Submit, Refresh, or Ticker Changed
-if (submit or refresh or ticker_changed) and st.session_state.ticker:
+# Trigger analysis if Submit or Ticker Changed
+if (submit or ticker_changed) and st.session_state.ticker:
     ticker = st.session_state.ticker
     
     if not ticker.strip():
