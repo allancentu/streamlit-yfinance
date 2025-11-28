@@ -439,7 +439,6 @@ def display_predictions():
         metrics_results = calculate_metrics(st.session_state.predictions)
         
         if not metrics_results["summary"].empty:
-            st.divider()
             st.subheader("Model Performance Metrics")
             
             # 1. Multi-label Metrics (Top Level)
