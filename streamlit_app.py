@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import tensorflow as tf
 import numpy as np
 import io
+import time
 from PIL import Image
 from datetime import datetime as dt, timedelta
 
@@ -203,10 +204,11 @@ def check_prediction_result(prediction, ticker_symbol):
                 now = datetime.now().astimezone()
             
             # Define wait times (when to allow checking)
+            # We check 1 minute after the candle closes to ensure data availability
             wait_delays = {
-                't+1': 5,
-                't+5': 10,
-                't+30': 35
+                't+1': 2,   # 1 min candle + 1 min buffer
+                't+5': 6,   # 5 min horizon + 1 min buffer
+                't+30': 31  # 30 min horizon + 1 min buffer
             }
             
             check_time = last_candle_time + timedelta(minutes=wait_delays[horizon_name])
@@ -524,6 +526,26 @@ if (submit or refresh) and st.session_state.ticker:
                     st.dataframe(styled_df, use_container_width=True, hide_index=True)
                 else:
                     st.info("No predictions yet. Click Submit or Refresh to generate predictions.")
+
+# Auto-refresh logic
+# Check if there are any pending predictions that need verification
+if 'predictions' in st.session_state and st.session_state.predictions:
+    has_pending = False
+    for pred in st.session_state.predictions:
+        # Check if any result column is not final
+        # Final states: "✅ Correct", "❌ Incorrect", "Neutral", "Error", "Data Unavailable" (though we try to avoid this now)
+        # Pending/Wait states: "Pending", "⏳ Wait until..."
+        for k in [1, 5, 30]:
+            res = pred.get(f"t+{k} Result", "")
+            if "✅" not in res and "❌" not in res and "Neutral" not in res and "Error" not in res and "Data Unavailable" not in res:
+                has_pending = True
+                break
+        if has_pending:
+            break
+    
+    if has_pending:
+        time.sleep(5)
+        st.rerun()
 
         except Exception as e:
             st.exception(f"An error occurred: {e}")
