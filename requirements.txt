@@ -1,0 +1,9 @@
+streamlit==1.50.0
+yfinance==0.2.66
+pandas==2.3.3
+lxml==6.0.2
+plotly==5.24.1
+mplfinance==0.12.10b0
+tensorflow
+Pillow==11.0.0
+h5py==3.12.1
