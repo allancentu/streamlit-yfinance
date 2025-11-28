@@ -574,36 +574,6 @@ def plot_candlestick(data, ticker):
         st.error(f"Error creating candlestick chart: {e}")
         return None
 
-# Main app UI
-st.title("Financial Analysis")
-
-# Ticker input and buttons in the main area
-col_ticker, col_submit = st.columns([4, 1])
-with col_ticker:
-    ticker_input = st.text_input("Enter a stock ticker (e.g. AAPL)", value=st.session_state.ticker, label_visibility="collapsed", placeholder="Enter stock ticker (e.g. AAPL)")
-
-with col_submit:
-    submit = st.button("Run Prediction", width="stretch")
-
-# Handle ticker updates and button clicks
-ticker_changed = False
-clean_input = ticker_input.strip().upper()
-
-# Check if input has changed (e.g. user typed new ticker and hit Enter, or clicked a button)
-if clean_input and clean_input != st.session_state.ticker:
-    st.session_state.ticker = clean_input
-    ticker_changed = True
-
-# Trigger analysis if Submit or Ticker Changed
-if (submit or ticker_changed) and st.session_state.ticker:
-    ticker = st.session_state.ticker
-    
-    if not ticker.strip():
-        st.error("Please provide a valid stock ticker.")
-    else:
-        run_analysis(ticker) 
-
-
 def run_analysis(ticker, history=None):
     """
     Run the full analysis pipeline for a single ticker:
@@ -734,7 +704,7 @@ st.title("Financial Analysis")
 # Ticker input and buttons in the main area
 col_ticker, col_submit, col_lucky = st.columns([3, 1, 1])
 with col_ticker:
-    ticker_input = st.text_input("Enter a stock ticker (e.g. AAPL)", value=st.session_state.ticker, label_visibility="collapsed", placeholder="Enter stock ticker (e.g. AAPL)")
+    ticker_input = st.text_input("Enter a stock ticker (e.g. AAPL)", value=st.session_state.ticker, label_visibility="collapsed", placeholder="Enter stock ticker (e.g. AAPL)", key="ticker_input")
 
 with col_submit:
     submit = st.button("Run Prediction", width="stretch")
@@ -750,6 +720,15 @@ clean_input = ticker_input.strip().upper()
 if clean_input and clean_input != st.session_state.ticker:
     st.session_state.ticker = clean_input
     ticker_changed = True
+
+# Trigger analysis if Submit or Ticker Changed
+if (submit or ticker_changed) and st.session_state.ticker:
+    ticker = st.session_state.ticker
+    
+    if not ticker.strip():
+        st.error("Please provide a valid stock ticker.")
+    else:
+        run_analysis(ticker)
 
 # Handle "I'm Lucky"
 if lucky:
