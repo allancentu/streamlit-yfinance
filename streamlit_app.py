@@ -195,13 +195,13 @@ def check_prediction_result(prediction, ticker_symbol):
             target_time = last_candle_time + timedelta(minutes=minutes)
             
             # Current time (naive, local)
-            now = datetime.now()
+            now = dt.now()
             # If target_time is aware, make now aware (local) or make target_time naive (local)
             # Since we converted last_candle_time to local (astimezone(None)), it might still be aware.
             # Let's ensure we compare apples to apples.
             if target_time.tzinfo is not None:
                 # target_time is aware (local), so we need aware now
-                now = datetime.now().astimezone()
+                now = dt.now().astimezone()
             
             # Define wait times (when to allow checking)
             # We check 1 minute after the candle closes to ensure data availability
@@ -223,10 +223,14 @@ def check_prediction_result(prediction, ticker_symbol):
             # Target time is in the past, try to fetch data
             try:
                 # Fetch a wider window to ensure we get the data
-                # Fetch from target_time - 2m to target_time + 5m
+                # Fetch from target_time - 2m to target_time + 2m
                 # We need to convert target_time back to UTC or just pass it, yfinance handles it
                 start_fetch = target_time - timedelta(minutes=2)
-                end_fetch = target_time + timedelta(minutes=5)
+                end_fetch = target_time + timedelta(minutes=2)
+                
+                # Clamp end_fetch to now to avoid future data errors
+                if end_fetch > now:
+                    end_fetch = now
                 
                 # Fetch 1m data
                 df = stock.history(start=start_fetch, end=end_fetch, interval="1m")
@@ -501,7 +505,7 @@ if (submit or refresh) and st.session_state.ticker:
                     # Create data for new prediction
                     new_prediction = {
                         "Ticker": ticker,
-                        "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "Timestamp": dt.now().strftime("%Y-%m-%d %H:%M:%S"),
                         "Last Candle Time": str(last_candle_time),
                         "Initial Close": initial_close,
                         "Identified Candlestick Patterns": patterns_str,
@@ -518,8 +522,8 @@ if (submit or refresh) and st.session_state.ticker:
                     import random
                     new_prediction = {
                         "Ticker": ticker,
-                        "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "Last Candle Time": str(datetime.now()), # Dummy
+                        "Timestamp": dt.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "Last Candle Time": str(dt.now()), # Dummy
                         "Initial Close": 0.0, # Dummy
                         "Identified Candlestick Patterns": "Error",
                         "t+1 Prediction": "Error",
