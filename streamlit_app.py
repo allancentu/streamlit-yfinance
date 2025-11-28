@@ -13,18 +13,11 @@ from PIL import Image
 from datetime import datetime as dt, timedelta
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, classification_report
 
-# Top 100 US Stocks (approximate)
-TOP_100_TICKERS = [
+# Top 30 US Stocks (approximate)
+TOP_30_TICKERS = [
     "NVDA", "AAPL", "MSFT", "GOOGL", "AMZN", "AVGO", "META", "TSLA", "BRK-B", "LLY", 
     "WMT", "JPM", "V", "ORCL", "MA", "XOM", "NFLX", "COST", "ABBV", "PLTR", 
-    "BAC", "HD", "PG", "AMD", "KO", "CRM", "PEP", "TMO", "MCD", "ADBE", 
-    "INTU", "DHR", "QCOM", "WFC", "GE", "MS", "ISRG", "TXN", "LIN", "UBER", 
-    "AMGN", "VRTX", "BMY", "PM", "ACN", "UNH", "COP", "CI", "CAT", "GS", 
-    "SPG", "BA", "BLK", "UPS", "IBM", "MMM", "GILD", "TJX", "CSCO", "NOW", 
-    "LOW", "BDX", "HON", "PNC", "ADI", "SCHW", "C", "PYPL", "TGT", "SO", 
-    "FDX", "ATVI", "PFE", "SYK", "AEP", "DE", "MO", "CHTR", "PCLN", "NEE", 
-    "CMCSA", "MCO", "PH", "MCK", "IBKR", "SCCO", "CEG", "KKR", "HOOD", "PSX", 
-    "GPN", "TSM", "ASML", "NVO", "RY", "SONY", "MDT", "CB", "ETN"
+    "BAC", "HD", "PG", "AMD", "KO", "CRM", "PEP", "TMO", "MCD", "ADBE"
 ]
 
 # Import do_network from stock_cnn.py
@@ -599,7 +592,7 @@ def run_analysis(ticker, history=None):
                 # Display candlestick chart
                 fig = plot_candlestick(history, ticker)
                 if fig:
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, use_container_width=True, key=f"chart_{ticker}_{int(time.time())}")
                 
                 # Show data info
                 st.caption(f"Showing {len(history)} candles from {history.index[0]} to {history.index[-1]}")
@@ -710,7 +703,7 @@ with col_submit:
     submit = st.button("Run Prediction", width="stretch")
 
 with col_lucky:
-    lucky = st.button("I'm Lucky", width="stretch", help="Run predictions for top 100 US stocks")
+    lucky = st.button("Feeling Lucky", width="stretch", help="Run predictions for top 30 US stocks")
 
 # Handle ticker updates and button clicks
 ticker_changed = False
@@ -730,15 +723,15 @@ if (submit or ticker_changed) and st.session_state.ticker:
     else:
         run_analysis(ticker)
 
-# Handle "I'm Lucky"
+# Handle "Feeling Lucky"
 if lucky:
-    st.session_state.ticker = TOP_100_TICKERS[0] # Default to top 1 (NVDA)
+    st.session_state.ticker = TOP_30_TICKERS[0] # Default to top 1 (NVDA)
     
-    with st.spinner("Feeling lucky! Batch predicting top 100 stocks...", show_time=True):
+    with st.spinner("Feeling lucky! Batch predicting top 30 stocks...", show_time=True):
         try:
-            # Batch download data for all 100 tickers
+            # Batch download data for all 30 tickers
             # We need 1m data, last 5 days to be safe
-            data = yf.download(tickers=TOP_100_TICKERS, period="5d", interval="1m", group_by='ticker', progress=False, auto_adjust=True)
+            data = yf.download(tickers=TOP_30_TICKERS, period="5d", interval="1m", group_by='ticker', progress=False, auto_adjust=True)
             
             # Load model once
             model, cdl_labels = load_model()
@@ -747,10 +740,10 @@ if lucky:
                 # Process all tickers EXCEPT the first one (which we'll run via run_analysis to show chart)
                 # Actually, let's process ALL here to be efficient, but we still need to run_analysis for the chart.
                 # run_analysis adds a prediction. So we should skip the first one here.
-                target_ticker = TOP_100_TICKERS[0]
+                target_ticker = TOP_30_TICKERS[0]
                 
                 count = 0
-                for ticker in TOP_100_TICKERS:
+                for ticker in TOP_30_TICKERS:
                     if ticker == target_ticker:
                         continue
                         
