@@ -293,43 +293,39 @@ def batch_update_predictions(predictions):
                 # Robust lookup: find index closest to target_minute but equal to it
                 # Since we have 1m interval, we can just look for the index
                 
-                try:
-                    # Round index to minutes for robust comparison
-                    # Create a temporary series of rounded times
-                    rounded_index = ticker_data.index.floor('min')
+                # Round index to minutes for robust comparison
+                # Create a temporary series of rounded times
+                rounded_index = ticker_data.index.floor('min')
+                
+                if target_minute in rounded_index:
+                    # Get the row
+                    # Use the original index corresponding to the rounded time
+                    loc = rounded_index.get_loc(target_minute)
+                    # If multiple (shouldn't happen with unique index), take first
+                    if isinstance(loc, slice) or isinstance(loc, np.ndarray):
+                        target_candle = ticker_data.iloc[loc].iloc[0]
+                    else:
+                        target_candle = ticker_data.iloc[loc]
+                        
+                    target_close = float(target_candle['Close'])
                     
-                    if target_minute in rounded_index:
-                        # Get the row
-                        # Use the original index corresponding to the rounded time
-                        loc = rounded_index.get_loc(target_minute)
-                        # If multiple (shouldn't happen with unique index), take first
-                        if isinstance(loc, slice) or isinstance(loc, np.ndarray):
-                            target_candle = ticker_data.iloc[loc].iloc[0]
-                        else:
-                            target_candle = ticker_data.iloc[loc]
-                            
-                        target_close = float(target_candle['Close'])
+                    # Determine direction
+                    if target_close > initial_close:
+                        actual = "Up"
+                    elif target_close < initial_close:
+                        actual = "Down"
+                    else:
+                        actual = "Neutral"
                         
-                        # Determine direction
-                        if target_close > initial_close:
-                            actual = "Up"
-                        elif target_close < initial_close:
-                            actual = "Down"
-                        else:
-                            actual = "Neutral"
-                            
-                        pred[f"{h} Actual"] = actual
-                        
-                        predicted = pred[pred_key]
-                        if predicted == actual:
-                            pred[result_key] = "✅ Correct"
-                        else:
-                            pred[result_key] = "❌ Incorrect"
-                            
-                except Exception as e:
-                    st.error(f"Error verification {ticker} {h}: {e}")
-                    print(f"Error verification {ticker} {h}: {e}")
-                    continue
+                    # Store actual for comparison
+                    pred[f"{h} Actual"] = actual
+                    
+                    # Compare with prediction
+                    predicted = pred[pred_key]
+                    if predicted == actual:
+                        pred[result_key] = "✅ Correct"
+                    else:
+                        pred[result_key] = "❌ Incorrect"
 
     except Exception as e:
         st.error(f"Batch update error: {e}")
