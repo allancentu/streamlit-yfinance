@@ -745,22 +745,23 @@ st.title("Financial Analysis")
 with st.form(key='analysis_form'):
     col_ticker, col_submit, col_lucky = st.columns([3, 1, 1])
     with col_ticker:
-        # We use a key for the widget, but we also want to pre-fill it.
-        # Note: modifying session_state.ticker directly from here is tricky if we want to update it only on submit.
-        # So we use a local variable and update session state on submit.
-        ticker_val = st.text_input("Enter a stock ticker (e.g. AAPL)", value=st.session_state.ticker, label_visibility="collapsed", placeholder="Enter stock ticker (e.g. AAPL)")
+        # Use key for state management. 
+        # We initialize it if not present.
+        if 'ticker_input' not in st.session_state:
+            st.session_state.ticker_input = st.session_state.get('ticker', 'AAPL')
+            
+        st.text_input("Enter a stock ticker (e.g. AAPL)", key="ticker_input", label_visibility="collapsed", placeholder="Enter stock ticker (e.g. AAPL)")
     
     with col_submit:
         submitted = st.form_submit_button("Submit", use_container_width=True)
         
     with col_lucky:
-        # Feeling Lucky as a separate submit button in the same form
-        # This allows it to be aligned nicely
         lucky_submitted = st.form_submit_button("Feeling Lucky", use_container_width=True)
 
 # Handle form submission
 if submitted:
-    clean_input = ticker_val.strip().upper()
+    # Read from the widget key
+    clean_input = st.session_state.ticker_input.strip().upper()
     if clean_input:
         st.session_state.ticker = clean_input
         with st.spinner(f'Analyzing {clean_input}...', show_time=True):
@@ -774,6 +775,9 @@ if 'first_run' not in st.session_state:
 
 if st.session_state.first_run:
     st.session_state.first_run = False
+    # Initialize ticker_input
+    st.session_state.ticker_input = 'AAPL'
+    st.session_state.ticker = 'AAPL'
     with st.spinner('Performing initial analysis for AAPL...', show_time=True):
         process_ticker('AAPL', render_chart=True)
 
@@ -781,7 +785,9 @@ if st.session_state.first_run:
 if lucky_submitted:
     # Use the first stock in the list for the chart
     first_ticker = TOP_30_STOCKS[0]
-    st.session_state.ticker = first_ticker # Update session state ticker
+    st.session_state.ticker = first_ticker 
+    # Update the widget state for next run
+    st.session_state.ticker_input = first_ticker
     
     # Progress bar and status
     progress_bar = st.progress(0)
