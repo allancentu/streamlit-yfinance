@@ -202,11 +202,20 @@ def check_prediction_result(prediction, ticker_symbol):
                 # target_time is aware (local), so we need aware now
                 now = datetime.now().astimezone()
             
-            # If target time is in the future
-            if target_time > now:
-                # Format target time for display
-                wait_time = target_time.strftime("%H:%M")
-                prediction[result_key] = f"Wait until {wait_time}"
+            # Define wait times (when to allow checking)
+            wait_delays = {
+                't+1': 5,
+                't+5': 10,
+                't+30': 35
+            }
+            
+            check_time = last_candle_time + timedelta(minutes=wait_delays[horizon_name])
+            
+            # If current time is before the check time, tell user to wait
+            if check_time > now:
+                # Format check time for display
+                wait_time_str = check_time.strftime("%H:%M")
+                prediction[result_key] = f"⏳ Wait until {wait_time_str}"
                 continue
             
             # Target time is in the past, try to fetch data
@@ -257,9 +266,9 @@ def check_prediction_result(prediction, ticker_symbol):
                 predicted_direction = prediction[pred_key]
                 
                 if predicted_direction == actual_direction:
-                    prediction[result_key] = "Correct"
+                    prediction[result_key] = "✅ Correct"
                 else:
-                    prediction[result_key] = "Incorrect"
+                    prediction[result_key] = "❌ Incorrect"
                     
             except Exception as e:
                 prediction[result_key] = "Error checking"
@@ -495,7 +504,24 @@ if (submit or refresh) and st.session_state.ticker:
                     
                     # Ensure columns exist (for old dummy data compatibility)
                     available_cols = [c for c in cols_to_show if c in predictions_df.columns]
-                    st.dataframe(predictions_df[available_cols], use_container_width=True, hide_index=True)
+                    display_df = predictions_df[available_cols]
+                    
+                    # Apply styling
+                    def highlight_results(val):
+                        if isinstance(val, str):
+                            if "✅" in val:
+                                return 'background-color: #d4edda; color: #155724' # Green
+                            elif "❌" in val:
+                                return 'background-color: #f8d7da; color: #721c24' # Red
+                            elif "⏳" in val:
+                                return 'background-color: #fff3cd; color: #856404' # Yellow
+                        return ''
+
+                    # Apply style to Result columns
+                    result_cols = [c for c in available_cols if "Result" in c]
+                    styled_df = display_df.style.map(highlight_results, subset=result_cols)
+                    
+                    st.dataframe(styled_df, use_container_width=True, hide_index=True)
                 else:
                     st.info("No predictions yet. Click Submit or Refresh to generate predictions.")
 
