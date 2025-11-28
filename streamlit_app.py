@@ -11,6 +11,7 @@ import io
 import time
 from PIL import Image
 from datetime import datetime as dt, timedelta
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 
 # Import do_network from stock_cnn.py
 # We need to make sure stock_cnn.py is in the path or just copy the function if it's easier
@@ -272,6 +273,9 @@ def check_prediction_result(prediction, ticker_symbol):
                     prediction[result_key] = "✅ Correct"
                 else:
                     prediction[result_key] = "❌ Incorrect"
+                
+                # Store actual direction for metrics calculation
+                prediction[f"{horizon_name} Actual"] = actual_direction
                     
             except Exception as e:
                 prediction[result_key] = "Error checking"
@@ -283,6 +287,68 @@ def check_prediction_result(prediction, ticker_symbol):
     return prediction
 
     return prediction
+
+def calculate_metrics(predictions):
+    """Calculate performance metrics (Accuracy, Precision, Recall, F1) globally and per horizon."""
+    metrics_data = []
+    
+    # Helper to calculate metrics for a set of true/pred values
+    def calc(y_true, y_pred, label):
+        if not y_true:
+            return None
+            
+        # Convert to binary (Up=1, Down=0, Neutral ignored for binary metrics usually, but let's handle it)
+        # For simplicity, let's treat "Up" as Positive class.
+        # If we have multi-class (Up, Down, Neutral), we need weighted average.
+        
+        acc = accuracy_score(y_true, y_pred)
+        prec = precision_score(y_true, y_pred, average='weighted', zero_division=0)
+        rec = recall_score(y_true, y_pred, average='weighted', zero_division=0)
+        f1 = f1_score(y_true, y_pred, average='weighted', zero_division=0)
+        
+        return {
+            "Horizon": label,
+            "Samples": len(y_true),
+            "Accuracy": acc,
+            "Precision": prec,
+            "Recall": rec,
+            "F1 Score": f1
+        }
+
+    # Global lists
+    global_true = []
+    global_pred = []
+    
+    # Per horizon lists
+    horizon_true = {1: [], 5: [], 30: []}
+    horizon_pred = {1: [], 5: [], 30: []}
+    
+    for pred in predictions:
+        for k in [1, 5, 30]:
+            actual = pred.get(f"t+{k} Actual")
+            predicted = pred.get(f"t+{k} Prediction")
+            result = pred.get(f"t+{k} Result")
+            
+            # Only include verified results
+            if result in ["✅ Correct", "❌ Incorrect"] and actual and predicted:
+                global_true.append(actual)
+                global_pred.append(predicted)
+                horizon_true[k].append(actual)
+                horizon_pred[k].append(predicted)
+    
+    # Calculate Global Metrics
+    if global_true:
+        metrics_data.append(calc(global_true, global_pred, "Global (All)"))
+        
+    # Calculate Per Horizon Metrics
+    for k in [1, 5, 30]:
+        if horizon_true[k]:
+            metrics_data.append(calc(horizon_true[k], horizon_pred[k], f"t+{k}"))
+            
+    if not metrics_data:
+        return pd.DataFrame()
+        
+    return pd.DataFrame(metrics_data)
 
 @st.fragment(run_every=30)
 def display_predictions():
@@ -329,6 +395,19 @@ def display_predictions():
         styled_df = display_df.style.map(highlight_results, subset=result_cols)
         
         st.dataframe(styled_df, width="stretch", hide_index=True)
+        
+        # Calculate and display metrics
+        metrics_df = calculate_metrics(st.session_state.predictions)
+        if not metrics_df.empty:
+            st.subheader("Model Performance Metrics")
+            # Format metrics as percentages
+            format_dict = {
+                "Accuracy": "{:.2%}",
+                "Precision": "{:.2%}",
+                "Recall": "{:.2%}",
+                "F1 Score": "{:.2%}"
+            }
+            st.dataframe(metrics_df.style.format(format_dict), width="stretch", hide_index=True)
     else:
         st.info("No predictions yet. Click Submit or Refresh to generate predictions.")
 
