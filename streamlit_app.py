@@ -488,15 +488,17 @@ with col_refresh:
     refresh = st.button("Refresh", width="stretch")
 
 # Handle button clicks
-if submit:
-    st.session_state.ticker = ticker_input.strip().upper()
+# Handle ticker updates and button clicks
+ticker_changed = False
+clean_input = ticker_input.strip().upper()
 
-if refresh and st.session_state.ticker:
-    # Refresh with current ticker
-    pass
+# Check if input has changed (e.g. user typed new ticker and hit Enter, or clicked a button)
+if clean_input and clean_input != st.session_state.ticker:
+    st.session_state.ticker = clean_input
+    ticker_changed = True
 
-# If we have a ticker to display (either from submit or refresh)
-if (submit or refresh) and st.session_state.ticker:
+# Trigger analysis if Submit, Refresh, or Ticker Changed
+if (submit or refresh or ticker_changed) and st.session_state.ticker:
     ticker = st.session_state.ticker
     
     if not ticker.strip():
@@ -521,97 +523,97 @@ if (submit or refresh) and st.session_state.ticker:
                     
                     # Show data info
                     st.caption(f"Showing {len(history)} candles from {history.index[0]} to {history.index[-1]}")
+
+                    # Add a new prediction row
+                    from datetime import datetime
+                    
+                    # Load model
+                    model, cdl_labels = load_model()
+                    
+                    if model:
+                        # Generate image for prediction
+                        img = generate_prediction_image(history)
+                        
+                        # Preprocess image for model
+                        img_array = np.array(img, dtype=np.float32) / 255.0
+                        img_batch = np.expand_dims(img_array, axis=0) # Add batch dimension
+                        
+                        # Run prediction
+                        predictions = model.predict(img_batch)
+                        cdl_pred, price_pred = predictions
+                        
+                        # Process CDL patterns
+                        # Get top 3 patterns by probability
+                        top_k = 3
+                        top_indices = np.argsort(cdl_pred[0])[-top_k:][::-1]
+                        
+                        detected_patterns = []
+                        for i in top_indices:
+                            prob = cdl_pred[0][i]
+                            # Only show if probability is somewhat significant (e.g. > 0.1) to avoid noise
+                            if prob > 0.1:
+                                detected_patterns.append(f"{cdl_labels[i]} ({prob:.2f})")
+                        
+                        if detected_patterns:
+                            patterns_str = ", ".join(detected_patterns)
+                        else:
+                            patterns_str = "None (Highest: {:.2f})".format(np.max(cdl_pred[0]))
+                            
+                        # Process Price Directions
+                        # Output: [next1_up, next1_down, next5_up, next5_down, next30_up, next30_down]
+                        def get_direction(up_prob, down_prob):
+                            if up_prob > down_prob and up_prob > 0.5:
+                                return "Up"
+                            elif down_prob > up_prob and down_prob > 0.5:
+                                return "Down"
+                            else:
+                                return "Neutral"
+                                
+                        t1_pred = get_direction(price_pred[0][0], price_pred[0][1])
+                        t5_pred = get_direction(price_pred[0][2], price_pred[0][3])
+                        t30_pred = get_direction(price_pred[0][4], price_pred[0][5])
+                        
+                        # Get initial close and time for verification
+                        last_candle = history.iloc[-1]
+                        initial_close = float(last_candle['Close'])
+                        last_candle_time = history.index[-1]
+                        
+                        # Create data for new prediction
+                        new_prediction = {
+                            "Ticker": ticker,
+                            "Timestamp": dt.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "Last Candle Time": str(last_candle_time),
+                            "Initial Close": initial_close,
+                            "Identified Candlestick Patterns": patterns_str,
+                            "t+1 Prediction": t1_pred,
+                            "t+5 Prediction": t5_pred,
+                            "t+30 Prediction": t30_pred,
+                            "t+1 Result": "Pending",
+                            "t+5 Result": "Pending",
+                            "t+30 Result": "Pending"
+                        }
+                    else:
+                        st.error("Model could not be loaded. Using dummy data.")
+                        # Fallback to dummy data if model fails
+                        import random
+                        new_prediction = {
+                            "Ticker": ticker,
+                            "Timestamp": dt.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "Last Candle Time": str(dt.now()), # Dummy
+                            "Initial Close": 0.0, # Dummy
+                            "Identified Candlestick Patterns": "Error",
+                            "t+1 Prediction": "Error",
+                            "t+5 Prediction": "Error",
+                            "t+30 Prediction": "Error",
+                            "t+1 Result": "Error",
+                            "t+5 Result": "Error",
+                            "t+30 Result": "Error"
+                        }
+                    
+                    # Add new prediction at the beginning of the list (newest first)
+                    st.session_state.predictions.insert(0, new_prediction)
                 else:
                     st.warning("No recent 1-minute interval data available for this ticker. The market may be closed or this ticker may not support 1-minute data.")
-
-                # Add a new prediction row
-                from datetime import datetime
-                
-                # Load model
-                model, cdl_labels = load_model()
-                
-                if model:
-                    # Generate image for prediction
-                    img = generate_prediction_image(history)
-                    
-                    # Preprocess image for model
-                    img_array = np.array(img, dtype=np.float32) / 255.0
-                    img_batch = np.expand_dims(img_array, axis=0) # Add batch dimension
-                    
-                    # Run prediction
-                    predictions = model.predict(img_batch)
-                    cdl_pred, price_pred = predictions
-                    
-                    # Process CDL patterns
-                    # Get top 3 patterns by probability
-                    top_k = 3
-                    top_indices = np.argsort(cdl_pred[0])[-top_k:][::-1]
-                    
-                    detected_patterns = []
-                    for i in top_indices:
-                        prob = cdl_pred[0][i]
-                        # Only show if probability is somewhat significant (e.g. > 0.1) to avoid noise
-                        if prob > 0.1:
-                            detected_patterns.append(f"{cdl_labels[i]} ({prob:.2f})")
-                    
-                    if detected_patterns:
-                        patterns_str = ", ".join(detected_patterns)
-                    else:
-                        patterns_str = "None (Highest: {:.2f})".format(np.max(cdl_pred[0]))
-                        
-                    # Process Price Directions
-                    # Output: [next1_up, next1_down, next5_up, next5_down, next30_up, next30_down]
-                    def get_direction(up_prob, down_prob):
-                        if up_prob > down_prob and up_prob > 0.5:
-                            return "Up"
-                        elif down_prob > up_prob and down_prob > 0.5:
-                            return "Down"
-                        else:
-                            return "Neutral"
-                            
-                    t1_pred = get_direction(price_pred[0][0], price_pred[0][1])
-                    t5_pred = get_direction(price_pred[0][2], price_pred[0][3])
-                    t30_pred = get_direction(price_pred[0][4], price_pred[0][5])
-                    
-                    # Get initial close and time for verification
-                    last_candle = history.iloc[-1]
-                    initial_close = float(last_candle['Close'])
-                    last_candle_time = history.index[-1]
-                    
-                    # Create data for new prediction
-                    new_prediction = {
-                        "Ticker": ticker,
-                        "Timestamp": dt.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "Last Candle Time": str(last_candle_time),
-                        "Initial Close": initial_close,
-                        "Identified Candlestick Patterns": patterns_str,
-                        "t+1 Prediction": t1_pred,
-                        "t+5 Prediction": t5_pred,
-                        "t+30 Prediction": t30_pred,
-                        "t+1 Result": "Pending",
-                        "t+5 Result": "Pending",
-                        "t+30 Result": "Pending"
-                    }
-                else:
-                    st.error("Model could not be loaded. Using dummy data.")
-                    # Fallback to dummy data if model fails
-                    import random
-                    new_prediction = {
-                        "Ticker": ticker,
-                        "Timestamp": dt.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "Last Candle Time": str(dt.now()), # Dummy
-                        "Initial Close": 0.0, # Dummy
-                        "Identified Candlestick Patterns": "Error",
-                        "t+1 Prediction": "Error",
-                        "t+5 Prediction": "Error",
-                        "t+30 Prediction": "Error",
-                        "t+1 Result": "Error",
-                        "t+5 Result": "Error",
-                        "t+30 Result": "Error"
-                    }
-                
-                # Add new prediction at the beginning of the list (newest first)
-                st.session_state.predictions.insert(0, new_prediction)
                 
         except Exception as e:
             st.exception(f"An error occurred: {e}")
