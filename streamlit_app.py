@@ -465,13 +465,13 @@ def display_predictions():
                     
                     with c1:
                         st.markdown(f"**Confusion Matrix (t+{k})**")
-                        st.dataframe(metrics_results["confusion_matrices"][k], use_container_width=True)
+                        st.dataframe(metrics_results["confusion_matrices"][k], width="stretch")
                     
                     with c2:
                         st.markdown(f"**Detailed Class Report (t+{k})**")
                         report = metrics_results["class_reports"][k]
                         # Format percentages
-                        st.dataframe(report.style.format("{:.2%}"), use_container_width=True)
+                        st.dataframe(report.style.format("{:.2%}"), width="stretch")
                 else:
                     st.info(f"No verified data for t+{k} yet.")
 
