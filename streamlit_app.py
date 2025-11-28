@@ -151,6 +151,96 @@ def generate_prediction_image(data):
     
     return img
 
+def check_prediction_result(prediction, ticker_symbol):
+    """
+    Verify if a prediction was correct based on subsequent market data.
+    Returns the updated prediction dictionary.
+    """
+    # Parse timestamps
+    try:
+        # We stored the last candle time as a string, need to parse it back
+        # If it's not present (old predictions), we can't verify accurately
+        if 'Last Candle Time' not in prediction:
+            return prediction
+            
+        last_candle_time = pd.to_datetime(prediction['Last Candle Time'])
+        initial_close = prediction['Initial Close']
+        
+        # Define horizons in minutes
+        horizons = {
+            't+1': 1,
+            't+5': 5,
+            't+30': 30
+        }
+        
+        stock = yf.Ticker(ticker_symbol)
+        
+        # Check each horizon
+        for horizon_name, minutes in horizons.items():
+            result_key = f"{horizon_name} Result"
+            pred_key = f"{horizon_name} Prediction"
+            
+            # If already verified, skip
+            if prediction[result_key] in ["Correct", "Incorrect", "Neutral"]:
+                continue
+                
+            target_time = last_candle_time + timedelta(minutes=minutes)
+            now = datetime.now(last_candle_time.tzinfo) if last_candle_time.tzinfo else datetime.now()
+            
+            # If target time is in the future
+            if target_time > now:
+                # Format target time for display
+                wait_time = target_time.strftime("%H:%M")
+                prediction[result_key] = f"Wait until {wait_time}"
+                continue
+            
+            # Target time is in the past, try to fetch data
+            # We need the candle corresponding to target_time
+            # Fetch a small window around target_time
+            # Note: yfinance intervals are [start, end), so we need end to be target_time + 1min
+            
+            # Add a buffer to ensure we cover the time
+            start_fetch = target_time
+            end_fetch = target_time + timedelta(minutes=1)
+            
+            try:
+                # Fetch 1m data for the specific time
+                df = stock.history(start=start_fetch, end=end_fetch, interval="1m")
+                
+                if df.empty:
+                    # Maybe market was closed or data missing
+                    prediction[result_key] = "Data Unavailable"
+                    continue
+                
+                # Get the close price of the target candle
+                # Should be the first (and likely only) row
+                target_close = df.iloc[0]['Close']
+                
+                # Determine actual movement
+                if target_close > initial_close:
+                    actual_direction = "Up"
+                elif target_close < initial_close:
+                    actual_direction = "Down"
+                else:
+                    actual_direction = "Neutral"
+                
+                # Compare with prediction
+                predicted_direction = prediction[pred_key]
+                
+                if predicted_direction == actual_direction:
+                    prediction[result_key] = "Correct"
+                else:
+                    prediction[result_key] = "Incorrect"
+                    
+            except Exception as e:
+                prediction[result_key] = "Error checking"
+                print(f"Error checking result for {horizon_name}: {e}")
+                
+    except Exception as e:
+        print(f"Error in check_prediction_result: {e}")
+        
+    return prediction
+
 # Streamlit app details
 st.set_page_config(page_title="Financial Analysis", layout="wide")
 
@@ -313,17 +403,24 @@ if (submit or refresh) and st.session_state.ticker:
                     t5_pred = get_direction(price_pred[0][2], price_pred[0][3])
                     t30_pred = get_direction(price_pred[0][4], price_pred[0][5])
                     
+                    # Get initial close and time for verification
+                    last_candle = history.iloc[-1]
+                    initial_close = float(last_candle['Close'])
+                    last_candle_time = history.index[-1]
+                    
                     # Create data for new prediction
                     new_prediction = {
                         "Ticker": ticker,
                         "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "Last Candle Time": str(last_candle_time),
+                        "Initial Close": initial_close,
                         "Identified Candlestick Patterns": patterns_str,
                         "t+1 Prediction": t1_pred,
                         "t+5 Prediction": t5_pred,
                         "t+30 Prediction": t30_pred,
-                        "t+1 Result": "",
-                        "t+5 Result": "",
-                        "t+30 Result": ""
+                        "t+1 Result": "Pending",
+                        "t+5 Result": "Pending",
+                        "t+30 Result": "Pending"
                     }
                 else:
                     st.error("Model could not be loaded. Using dummy data.")
@@ -332,23 +429,44 @@ if (submit or refresh) and st.session_state.ticker:
                     new_prediction = {
                         "Ticker": ticker,
                         "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "Last Candle Time": str(datetime.now()), # Dummy
+                        "Initial Close": 0.0, # Dummy
                         "Identified Candlestick Patterns": "Error",
                         "t+1 Prediction": "Error",
                         "t+5 Prediction": "Error",
                         "t+30 Prediction": "Error",
-                        "t+1 Result": "",
-                        "t+5 Result": "",
-                        "t+30 Result": ""
+                        "t+1 Result": "Error",
+                        "t+5 Result": "Error",
+                        "t+30 Result": "Error"
                     }
                 
                 # Add new prediction at the beginning of the list (newest first)
                 st.session_state.predictions.insert(0, new_prediction)
                 
+                # Update all predictions with results
+                # We iterate through a copy to avoid issues if we needed to modify the list structure (though we are modifying objects)
+                for i, pred in enumerate(st.session_state.predictions):
+                    # Only check if pending or wait message
+                    if any(pred.get(f"t+{k} Result") not in ["Correct", "Incorrect", "Neutral", "Error"] for k in [1, 5, 30]):
+                        updated_pred = check_prediction_result(pred, pred['Ticker'])
+                        st.session_state.predictions[i] = updated_pred
+                
                 # Display predictions table
                 st.subheader("Predictions")
                 if st.session_state.predictions:
+                    # Create a display dataframe (hide internal columns)
                     predictions_df = pd.DataFrame(st.session_state.predictions)
-                    st.dataframe(predictions_df, use_container_width=True, hide_index=True)
+                    
+                    # Filter columns to show
+                    cols_to_show = [
+                        "Ticker", "Timestamp", "Identified Candlestick Patterns",
+                        "t+1 Prediction", "t+5 Prediction", "t+30 Prediction",
+                        "t+1 Result", "t+5 Result", "t+30 Result"
+                    ]
+                    
+                    # Ensure columns exist (for old dummy data compatibility)
+                    available_cols = [c for c in cols_to_show if c in predictions_df.columns]
+                    st.dataframe(predictions_df[available_cols], use_container_width=True, hide_index=True)
                 else:
                     st.info("No predictions yet. Click Submit or Refresh to generate predictions.")
 
