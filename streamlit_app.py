@@ -440,7 +440,7 @@ def display_predictions():
         
         # Filter columns to show
         cols_to_show = [
-            "Ticker", "Timestamp", "Identified Candlestick Patterns",
+            "Ticker", "Timestamp", "Last Candle Time", "Identified Candlestick Patterns",
             "t+1 Prediction", "t+5 Prediction", "t+30 Prediction",
             "t+1 Result", "t+5 Result", "t+30 Result"
         ]
@@ -532,9 +532,9 @@ def get_last_30_min_data(stock):
     If market is closed, get the last 30 minutes from the most recent trading day.
     Returns up to 30 candles (or less if not enough data available).
     """
-    # Try to get recent data with 1-minute intervals
+    # Try to get recent data with 1-minute intervals, INCLUDING extended hours
     # First, try fetching 1 day of 1-minute data
-    history_1d = stock.history(period="1d", interval="1m")
+    history_1d = stock.history(period="1d", interval="1m", prepost=True)
     
     if not history_1d.empty and len(history_1d) > 0:
         # Take the last 30 candles (or all if less than 30)
@@ -542,7 +542,7 @@ def get_last_30_min_data(stock):
         return last_30
     
     # If no data from 1 day, try with 5 days
-    history_5d = stock.history(period="5d", interval="1m")
+    history_5d = stock.history(period="5d", interval="1m", prepost=True)
     
     if not history_5d.empty and len(history_5d) > 0:
         # Take the last 30 candles (or all if less than 30)
