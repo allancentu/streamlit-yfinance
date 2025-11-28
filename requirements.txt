@@ -8,3 +8,4 @@ matplotlib
 tensorflow
 Pillow==11.0.0
 h5py==3.12.1
+scikit-learn
