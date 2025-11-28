@@ -13,6 +13,20 @@ from PIL import Image
 from datetime import datetime as dt, timedelta
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, classification_report
 
+# Top 100 US Stocks (approximate)
+TOP_100_TICKERS = [
+    "NVDA", "AAPL", "MSFT", "GOOGL", "AMZN", "AVGO", "META", "TSLA", "BRK-B", "LLY", 
+    "WMT", "JPM", "V", "ORCL", "MA", "XOM", "NFLX", "COST", "ABBV", "PLTR", 
+    "BAC", "HD", "PG", "AMD", "KO", "CRM", "PEP", "TMO", "MCD", "ADBE", 
+    "INTU", "DHR", "QCOM", "WFC", "GE", "MS", "ISRG", "TXN", "LIN", "UBER", 
+    "AMGN", "VRTX", "BMY", "PM", "ACN", "UNH", "COP", "CI", "CAT", "GS", 
+    "SPG", "BA", "BLK", "UPS", "IBM", "MMM", "GILD", "TJX", "CSCO", "NOW", 
+    "LOW", "BDX", "HON", "PNC", "ADI", "SCHW", "C", "PYPL", "TGT", "SO", 
+    "FDX", "ATVI", "PFE", "SYK", "AEP", "DE", "MO", "CHTR", "PCLN", "NEE", 
+    "CMCSA", "MCO", "PH", "MCK", "IBKR", "SCCO", "CEG", "KKR", "HOOD", "PSX", 
+    "GPN", "TSM", "ASML", "NVO", "RY", "SONY", "MDT", "CB", "ETN"
+]
+
 # Import do_network from stock_cnn.py
 # We need to make sure stock_cnn.py is in the path or just copy the function if it's easier
 # Since it's in the same directory, we can try to import it.
@@ -203,7 +217,7 @@ def batch_update_predictions(predictions):
         # Fetch enough data to cover the longest horizon (30m) + buffer
         # 5 days is safe to cover weekends/holidays
         print(f"Batch fetching for: {tickers_to_fetch}")
-        data = yf.download(tickers=list(tickers_to_fetch), period="5d", interval="1m", group_by='ticker', progress=False)
+        data = yf.download(tickers=list(tickers_to_fetch), period="5d", interval="1m", group_by='ticker', progress=False, auto_adjust=True)
         
         # Handle single ticker case (columns are not MultiIndex if single ticker)
         if len(tickers_to_fetch) == 1:
@@ -587,19 +601,8 @@ if (submit or ticker_changed) and st.session_state.ticker:
     if not ticker.strip():
         st.error("Please provide a valid stock ticker.")
     else:
-# Top 100 US Stocks (approximate)
-TOP_100_TICKERS = [
-    "NVDA", "AAPL", "MSFT", "GOOGL", "AMZN", "AVGO", "META", "TSLA", "BRK-B", "LLY", 
-    "WMT", "JPM", "V", "ORCL", "MA", "XOM", "NFLX", "COST", "ABBV", "PLTR", 
-    "BAC", "HD", "PG", "AMD", "KO", "CRM", "PEP", "TMO", "MCD", "ADBE", 
-    "INTU", "DHR", "QCOM", "WFC", "GE", "MS", "ISRG", "TXN", "LIN", "UBER", 
-    "AMGN", "VRTX", "BMY", "PM", "ACN", "UNH", "COP", "CI", "CAT", "GS", 
-    "SPG", "BA", "BLK", "UPS", "IBM", "MMM", "GILD", "TJX", "CSCO", "NOW", 
-    "LOW", "BDX", "HON", "PNC", "ADI", "SCHW", "C", "PYPL", "TGT", "SO", 
-    "FDX", "ATVI", "PFE", "SYK", "AEP", "DE", "MO", "CHTR", "PCLN", "NEE", 
-    "CMCSA", "MCO", "PH", "MCK", "IBKR", "SCCO", "CEG", "KKR", "HOOD", "PSX", 
-    "GPN", "TSM", "ASML", "NVO", "RY", "SONY", "MDT", "CB", "ETN"
-]
+        run_analysis(ticker) 
+
 
 def run_analysis(ticker, history=None):
     """
@@ -756,7 +759,7 @@ if lucky:
         try:
             # Batch download data for all 100 tickers
             # We need 1m data, last 5 days to be safe
-            data = yf.download(tickers=TOP_100_TICKERS, period="5d", interval="1m", group_by='ticker', progress=False)
+            data = yf.download(tickers=TOP_100_TICKERS, period="5d", interval="1m", group_by='ticker', progress=False, auto_adjust=True)
             
             # Load model once
             model, cdl_labels = load_model()
