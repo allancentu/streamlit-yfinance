@@ -197,6 +197,7 @@ def batch_update_predictions(predictions):
                     # Update wait message
                     wait_time_str = check_time.strftime("%H:%M")
                     pred[f"{h} Result"] = f"⏳ Wait until {wait_time_str}"
+                    print(f"DEBUG: Set wait message for {pred.get('Ticker', 'unknown')} {h}: {pred[f'{h} Result']}")
         
         if needs_update:
             pending_indices.append(i)
