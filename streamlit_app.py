@@ -282,13 +282,22 @@ if (submit or refresh) and st.session_state.ticker:
                     predictions = model.predict(img_batch)
                     cdl_pred, price_pred = predictions
                     
-                    # Process CDL patterns (threshold 0.5)
-                    detected_patterns_indices = np.where(cdl_pred[0] > 0.5)[0]
-                    if len(detected_patterns_indices) > 0:
-                        detected_patterns = [cdl_labels[i] for i in detected_patterns_indices]
+                    # Process CDL patterns
+                    # Get top 3 patterns by probability
+                    top_k = 3
+                    top_indices = np.argsort(cdl_pred[0])[-top_k:][::-1]
+                    
+                    detected_patterns = []
+                    for i in top_indices:
+                        prob = cdl_pred[0][i]
+                        # Only show if probability is somewhat significant (e.g. > 0.1) to avoid noise
+                        if prob > 0.1:
+                            detected_patterns.append(f"{cdl_labels[i]} ({prob:.2f})")
+                    
+                    if detected_patterns:
                         patterns_str = ", ".join(detected_patterns)
                     else:
-                        patterns_str = "None"
+                        patterns_str = "None (Highest: {:.2f})".format(np.max(cdl_pred[0]))
                         
                     # Process Price Directions
                     # Output: [next1_up, next1_down, next5_up, next5_down, next30_up, next30_down]
