@@ -151,6 +151,8 @@ def generate_prediction_image(data):
     
     return img
 
+    return img
+
 def check_prediction_result(prediction, ticker_symbol):
     """
     Verify if a prediction was correct based on subsequent market data.
@@ -159,12 +161,17 @@ def check_prediction_result(prediction, ticker_symbol):
     # Parse timestamps
     try:
         # We stored the last candle time as a string, need to parse it back
-        # If it's not present (old predictions), we can't verify accurately
         if 'Last Candle Time' not in prediction:
             return prediction
             
+        # Parse the stored time (which includes timezone info from yfinance usually)
         last_candle_time = pd.to_datetime(prediction['Last Candle Time'])
         initial_close = prediction['Initial Close']
+        
+        # Convert last_candle_time to local system timezone for consistency with datetime.now()
+        # This ensures "Wait until..." messages match the user's wall clock
+        if last_candle_time.tzinfo is not None:
+            last_candle_time = last_candle_time.astimezone(None) # None = local timezone
         
         # Define horizons in minutes
         horizons = {
@@ -185,7 +192,15 @@ def check_prediction_result(prediction, ticker_symbol):
                 continue
                 
             target_time = last_candle_time + timedelta(minutes=minutes)
-            now = datetime.now(last_candle_time.tzinfo) if last_candle_time.tzinfo else datetime.now()
+            
+            # Current time (naive, local)
+            now = datetime.now()
+            # If target_time is aware, make now aware (local) or make target_time naive (local)
+            # Since we converted last_candle_time to local (astimezone(None)), it might still be aware.
+            # Let's ensure we compare apples to apples.
+            if target_time.tzinfo is not None:
+                # target_time is aware (local), so we need aware now
+                now = datetime.now().astimezone()
             
             # If target time is in the future
             if target_time > now:
@@ -195,26 +210,40 @@ def check_prediction_result(prediction, ticker_symbol):
                 continue
             
             # Target time is in the past, try to fetch data
-            # We need the candle corresponding to target_time
-            # Fetch a small window around target_time
-            # Note: yfinance intervals are [start, end), so we need end to be target_time + 1min
-            
-            # Add a buffer to ensure we cover the time
-            start_fetch = target_time
-            end_fetch = target_time + timedelta(minutes=1)
-            
             try:
-                # Fetch 1m data for the specific time
+                # Fetch a wider window to ensure we get the data
+                # Fetch from target_time - 2m to target_time + 5m
+                # We need to convert target_time back to UTC or just pass it, yfinance handles it
+                start_fetch = target_time - timedelta(minutes=2)
+                end_fetch = target_time + timedelta(minutes=5)
+                
+                # Fetch 1m data
                 df = stock.history(start=start_fetch, end=end_fetch, interval="1m")
                 
                 if df.empty:
-                    # Maybe market was closed or data missing
                     prediction[result_key] = "Data Unavailable"
                     continue
                 
-                # Get the close price of the target candle
-                # Should be the first (and likely only) row
-                target_close = df.iloc[0]['Close']
+                # Convert df index to local timezone to match target_time
+                df.index = df.index.tz_convert(None) if target_time.tzinfo is None else df.index.tz_convert(target_time.tzinfo)
+                
+                # Find the candle at target_time (or very close to it)
+                # We look for the exact minute
+                target_candle = None
+                
+                # Iterate to find exact match
+                for idx, row in df.iterrows():
+                    # Compare down to the minute
+                    if idx.replace(second=0, microsecond=0) == target_time.replace(second=0, microsecond=0):
+                        target_candle = row
+                        break
+                
+                if target_candle is None:
+                    # If exact match not found, maybe it's a gap?
+                    prediction[result_key] = "Data Unavailable"
+                    continue
+                
+                target_close = float(target_candle['Close'])
                 
                 # Determine actual movement
                 if target_close > initial_close:
