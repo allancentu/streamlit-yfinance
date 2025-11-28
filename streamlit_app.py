@@ -692,4 +692,3 @@ if (submit or refresh or ticker_changed) and st.session_state.ticker:
 
 # Call the fragment always, outside the conditional blocks
 display_predictions()
-
