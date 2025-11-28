@@ -220,8 +220,8 @@ def check_prediction_result(prediction, ticker_symbol):
             
             # Target time is in the past, try to fetch data
             try:
-                # Fetch 1m data for the last day
-                df = stock.history(period="1d", interval="1m")
+                # Fetch 1m data for the last day, INCLUDING extended hours
+                df = stock.history(period="1d", interval="1m", prepost=True)
                 
                 # Check if data is fresh enough
                 if not df.empty:
@@ -232,13 +232,13 @@ def check_prediction_result(prediction, ticker_symbol):
                     else:
                         last_dt_utc = last_dt.astimezone(datetime.timezone.utc)
                         
-                    # If the latest data is older than our target, we definitely need more data (or market is closed)
+                    # If the latest data is older than our target, we definitely need more data
                     if last_dt_utc < target_time_utc:
                         # Try fetching 5d to be sure
-                        df = stock.history(period="5d", interval="1m")
+                        df = stock.history(period="5d", interval="1m", prepost=True)
 
                 if df.empty:
-                    df = stock.history(period="5d", interval="1m")
+                    df = stock.history(period="5d", interval="1m", prepost=True)
                 
                 if df.empty:
                     prediction[result_key] = f"⏳ No data yet..."
@@ -777,3 +777,58 @@ if lucky:
 
 # Call the fragment always, outside the conditional blocks
 display_predictions()
+
+# Manual Verification Tool (Debug)
+with st.expander("🛠️ Manual Verification (Debug)"):
+    st.caption("Use this tool to check if data exists for a specific time.")
+    c1, c2, c3 = st.columns(3)
+    v_ticker = c1.text_input("Ticker", value="AAPL", key="v_ticker")
+    v_date = c2.date_input("Date", value=dt.now(), key="v_date")
+    v_time = c3.time_input("Time (Local)", value=dt.now().time(), key="v_time")
+    
+    if st.button("Check Data Availability"):
+        try:
+            # Construct target datetime (local)
+            target_dt = datetime.combine(v_date, v_time)
+            # Assume local timezone for input
+            target_dt = target_dt.replace(tzinfo=dt.now().astimezone().tzinfo)
+            
+            st.write(f"Looking for data at: **{target_dt}** (Local) / **{target_dt.astimezone(datetime.timezone.utc)}** (UTC)")
+            
+            v_stock = yf.Ticker(v_ticker)
+            # Fetch data with prepost=True
+            v_df = v_stock.history(period="5d", interval="1m", prepost=True)
+            
+            if v_df.empty:
+                st.error("No data found for the last 5 days.")
+            else:
+                # Convert df to UTC for comparison
+                if v_df.index.tz is None:
+                    v_df.index = v_df.index.tz_localize('UTC')
+                else:
+                    v_df.index = v_df.index.tz_convert('UTC')
+                    
+                target_utc = target_dt.astimezone(datetime.timezone.utc)
+                
+                # Find closest match
+                closest_idx = None
+                min_diff = float('inf')
+                
+                for idx in v_df.index:
+                    diff = abs((idx - target_utc).total_seconds())
+                    if diff < min_diff:
+                        min_diff = diff
+                        closest_idx = idx
+                        
+                st.write(f"Closest data point found: **{closest_idx}** (UTC)")
+                st.write(f"Difference: **{min_diff:.1f} seconds**")
+                
+                if min_diff < 60:
+                    st.success(f"✅ Match found! Close: {v_df.loc[closest_idx]['Close']}")
+                else:
+                    st.warning("⚠️ No exact match found within 1 minute.")
+                    
+                st.dataframe(v_df.tail(5))
+                
+        except Exception as e:
+            st.error(f"Error: {e}")
