@@ -11,7 +11,7 @@ import io
 import time
 from PIL import Image
 from datetime import datetime as dt, timedelta
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, classification_report
 
 # Import do_network from stock_cnn.py
 # We need to make sure stock_cnn.py is in the path or just copy the function if it's easier
@@ -289,66 +289,105 @@ def check_prediction_result(prediction, ticker_symbol):
     return prediction
 
 def calculate_metrics(predictions):
-    """Calculate performance metrics (Accuracy, Precision, Recall, F1) globally and per horizon."""
+    """Calculate comprehensive performance metrics."""
     metrics_data = []
     
-    # Helper to calculate metrics for a set of true/pred values
-    def calc(y_true, y_pred, label):
-        if not y_true:
-            return None
-            
-        # Convert to binary (Up=1, Down=0, Neutral ignored for binary metrics usually, but let's handle it)
-        # For simplicity, let's treat "Up" as Positive class.
-        # If we have multi-class (Up, Down, Neutral), we need weighted average.
-        
-        acc = accuracy_score(y_true, y_pred)
-        prec = precision_score(y_true, y_pred, average='weighted', zero_division=0)
-        rec = recall_score(y_true, y_pred, average='weighted', zero_division=0)
-        f1 = f1_score(y_true, y_pred, average='weighted', zero_division=0)
-        
-        return {
-            "Horizon": label,
-            "Samples": len(y_true),
-            "Accuracy": acc,
-            "Precision": prec,
-            "Recall": rec,
-            "F1 Score": f1
-        }
-
-    # Global lists
-    global_true = []
-    global_pred = []
+    # Containers for Multi-label metrics (only rows where ALL horizons are verified)
+    multilabel_rows_true = []
+    multilabel_rows_pred = []
     
-    # Per horizon lists
+    # Containers for Per-Horizon metrics (all verified outcomes for that horizon)
     horizon_true = {1: [], 5: [], 30: []}
     horizon_pred = {1: [], 5: [], 30: []}
     
     for pred in predictions:
+        # Check if this row is fully verified for multi-label
+        row_true = []
+        row_pred = []
+        fully_verified = True
+        
         for k in [1, 5, 30]:
             actual = pred.get(f"t+{k} Actual")
             predicted = pred.get(f"t+{k} Prediction")
             result = pred.get(f"t+{k} Result")
             
-            # Only include verified results
             if result in ["✅ Correct", "❌ Incorrect"] and actual and predicted:
-                global_true.append(actual)
-                global_pred.append(predicted)
                 horizon_true[k].append(actual)
                 horizon_pred[k].append(predicted)
-    
-    # Calculate Global Metrics
-    if global_true:
-        metrics_data.append(calc(global_true, global_pred, "Global (All)"))
+                row_true.append(actual)
+                row_pred.append(predicted)
+            else:
+                fully_verified = False
         
-    # Calculate Per Horizon Metrics
+        if fully_verified:
+            multilabel_rows_true.append(row_true)
+            multilabel_rows_pred.append(row_pred)
+
+    # 1. Standard Summary Metrics (Global & Per Horizon)
+    def calc_summary(y_true, y_pred, label):
+        if not y_true: return None
+        return {
+            "Horizon": label,
+            "Samples": len(y_true),
+            "Accuracy": accuracy_score(y_true, y_pred),
+            "F1 (Weighted)": f1_score(y_true, y_pred, average='weighted', zero_division=0)
+        }
+
+    # Global lists for summary
+    global_true = [item for sublist in horizon_true.values() for item in sublist]
+    global_pred = [item for sublist in horizon_pred.values() for item in sublist]
+    
+    if global_true:
+        metrics_data.append(calc_summary(global_true, global_pred, "Global (All)"))
     for k in [1, 5, 30]:
         if horizon_true[k]:
-            metrics_data.append(calc(horizon_true[k], horizon_pred[k], f"t+{k}"))
+            metrics_data.append(calc_summary(horizon_true[k], horizon_pred[k], f"t+{k}"))
             
-    if not metrics_data:
-        return pd.DataFrame()
+    summary_df = pd.DataFrame(metrics_data) if metrics_data else pd.DataFrame()
+
+    # 2. Confusion Matrices & Class Reports
+    confusion_matrices = {}
+    class_reports = {}
+    
+    labels = ["Up", "Down", "Neutral"] # Standardize labels
+    
+    for k in [1, 5, 30]:
+        if horizon_true[k]:
+            # Confusion Matrix
+            # Use labels to ensure fixed size even if some classes are missing
+            cm = confusion_matrix(horizon_true[k], horizon_pred[k], labels=labels)
+            cm_df = pd.DataFrame(cm, index=[f"Actual {l}" for l in labels], columns=[f"Pred {l}" for l in labels])
+            confusion_matrices[k] = cm_df
+            
+            # Class Report
+            report = classification_report(horizon_true[k], horizon_pred[k], labels=labels, output_dict=True, zero_division=0)
+            report_df = pd.DataFrame(report).transpose()
+            class_reports[k] = report_df
+
+    # 3. Multi-label Metrics
+    multilabel_metrics = {}
+    if multilabel_rows_true:
+        # Exact Match Ratio: Fraction of rows where row_true == row_pred
+        exact_matches = sum([1 for i in range(len(multilabel_rows_true)) if multilabel_rows_true[i] == multilabel_rows_pred[i]])
+        exact_match_ratio = exact_matches / len(multilabel_rows_true)
         
-    return pd.DataFrame(metrics_data)
+        # Hamming Score: Fraction of correct labels total
+        total_labels = len(multilabel_rows_true) * 3
+        correct_labels = sum([sum([1 for j in range(3) if multilabel_rows_true[i][j] == multilabel_rows_pred[i][j]]) for i in range(len(multilabel_rows_true))])
+        hamming_score = correct_labels / total_labels
+        
+        multilabel_metrics = {
+            "Exact Match Ratio (All 3 Correct)": exact_match_ratio,
+            "Hamming Score (Avg Accuracy)": hamming_score,
+            "Fully Verified Samples": len(multilabel_rows_true)
+        }
+
+    return {
+        "summary": summary_df,
+        "confusion_matrices": confusion_matrices,
+        "class_reports": class_reports,
+        "multilabel": multilabel_metrics
+    }
 
 @st.fragment(run_every=30)
 def display_predictions():
@@ -397,17 +436,51 @@ def display_predictions():
         st.dataframe(styled_df, width="stretch", hide_index=True)
         
         # Calculate and display metrics
-        metrics_df = calculate_metrics(st.session_state.predictions)
-        if not metrics_df.empty:
+        metrics_results = calculate_metrics(st.session_state.predictions)
+        
+        if not metrics_results["summary"].empty:
+            st.divider()
             st.subheader("Model Performance Metrics")
-            # Format metrics as percentages
-            format_dict = {
-                "Accuracy": "{:.2%}",
-                "Precision": "{:.2%}",
-                "Recall": "{:.2%}",
-                "F1 Score": "{:.2%}"
-            }
-            st.dataframe(metrics_df.style.format(format_dict), width="stretch", hide_index=True)
+            
+            # 1. Multi-label Metrics (Top Level)
+            if metrics_results["multilabel"]:
+                m = metrics_results["multilabel"]
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Exact Match Ratio (All 3)", f"{m['Exact Match Ratio (All 3 Correct)']:.1%}", help="Percentage of predictions where t+1, t+5, AND t+30 were ALL correct.")
+                c2.metric("Hamming Score", f"{m['Hamming Score (Avg Accuracy)']:.1%}", help="Average accuracy across all horizons (e.g. 2/3 correct = 66%).")
+                c3.metric("Fully Verified Samples", m['Fully Verified Samples'])
+            
+            # 2. Detailed Metrics Tabs
+            tab_summary, tab_t1, tab_t5, tab_t30 = st.tabs(["Summary", "t+1 Metrics", "t+5 Metrics", "t+30 Metrics"])
+            
+            with tab_summary:
+                st.caption("High-level performance overview.")
+                format_dict = {"Accuracy": "{:.2%}", "F1 (Weighted)": "{:.2%}"}
+                st.dataframe(metrics_results["summary"].style.format(format_dict), width="stretch", hide_index=True)
+                
+            # Helper to display detailed metrics for a horizon
+            def display_horizon_metrics(k):
+                if k in metrics_results["confusion_matrices"]:
+                    c1, c2 = st.columns([1, 2])
+                    
+                    with c1:
+                        st.markdown(f"**Confusion Matrix (t+{k})**")
+                        st.dataframe(metrics_results["confusion_matrices"][k], use_container_width=True)
+                    
+                    with c2:
+                        st.markdown(f"**Detailed Class Report (t+{k})**")
+                        report = metrics_results["class_reports"][k]
+                        # Format percentages
+                        st.dataframe(report.style.format("{:.2%}"), use_container_width=True)
+                else:
+                    st.info(f"No verified data for t+{k} yet.")
+
+            with tab_t1:
+                display_horizon_metrics(1)
+            with tab_t5:
+                display_horizon_metrics(5)
+            with tab_t30:
+                display_horizon_metrics(30)
     else:
         st.info("No predictions yet. Click Submit or Refresh to generate predictions.")
 
