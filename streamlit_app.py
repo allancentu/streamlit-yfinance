@@ -94,7 +94,7 @@ def load_model():
     
     model = do_network(dummy_cdl_columns)
     try:
-        model.load_weights('best_model.weights.h5')
+        model.load_weights('model/best_model.weights.h5')
         return model, dummy_cdl_columns
     except Exception as e:
         st.error(f"Failed to load model weights: {e}")
@@ -236,7 +236,9 @@ def check_prediction_result(prediction, ticker_symbol):
                 df = stock.history(start=start_fetch, end=end_fetch, interval="1m")
                 
                 if df.empty:
-                    prediction[result_key] = "Data Unavailable"
+                    # Instead of "Data Unavailable", wait 1 more minute and try again
+                    next_retry = dt.now() + timedelta(minutes=1)
+                    prediction[result_key] = f"⏳ Wait until {next_retry.strftime('%H:%M')}"
                     continue
                 
                 # Convert df index to local timezone to match target_time
@@ -254,8 +256,9 @@ def check_prediction_result(prediction, ticker_symbol):
                         break
                 
                 if target_candle is None:
-                    # If exact match not found, maybe it's a gap?
-                    prediction[result_key] = "Data Unavailable"
+                    # If exact match not found, maybe it's a gap? Wait 1 more minute and try again
+                    next_retry = dt.now() + timedelta(minutes=1)
+                    prediction[result_key] = f"⏳ Wait until {next_retry.strftime('%H:%M')}"
                     continue
                 
                 target_close = float(target_candle['Close'])
