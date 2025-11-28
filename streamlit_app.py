@@ -281,6 +281,56 @@ def check_prediction_result(prediction, ticker_symbol):
         
     return prediction
 
+    return prediction
+
+@st.fragment(run_every=5)
+def display_predictions():
+    """Display and verify predictions with auto-refresh."""
+    # Verification Logic
+    if 'predictions' in st.session_state and st.session_state.predictions:
+        # Update all predictions with results
+        for i, pred in enumerate(st.session_state.predictions):
+            # Only check if pending or wait message
+            if any(pred.get(f"t+{k} Result") not in ["✅ Correct", "❌ Incorrect", "Neutral", "Error"] for k in [1, 5, 30]):
+                updated_pred = check_prediction_result(pred, pred['Ticker'])
+                st.session_state.predictions[i] = updated_pred
+
+    # Display Logic
+    st.subheader("Predictions")
+    if 'predictions' in st.session_state and st.session_state.predictions:
+        # Create a display dataframe (hide internal columns)
+        predictions_df = pd.DataFrame(st.session_state.predictions)
+        
+        # Filter columns to show
+        cols_to_show = [
+            "Ticker", "Timestamp", "Identified Candlestick Patterns",
+            "t+1 Prediction", "t+5 Prediction", "t+30 Prediction",
+            "t+1 Result", "t+5 Result", "t+30 Result"
+        ]
+        
+        # Ensure columns exist (for old dummy data compatibility)
+        available_cols = [c for c in cols_to_show if c in predictions_df.columns]
+        display_df = predictions_df[available_cols]
+        
+        # Apply styling
+        def highlight_results(val):
+            if isinstance(val, str):
+                if "✅" in val:
+                    return 'background-color: #d4edda; color: #155724' # Green
+                elif "❌" in val:
+                    return 'background-color: #f8d7da; color: #721c24' # Red
+                elif "⏳" in val:
+                    return 'background-color: #fff3cd; color: #856404' # Yellow
+            return ''
+
+        # Apply style to Result columns
+        result_cols = [c for c in available_cols if "Result" in c]
+        styled_df = display_df.style.map(highlight_results, subset=result_cols)
+        
+        st.dataframe(styled_df, use_container_width=True, hide_index=True)
+    else:
+        st.info("No predictions yet. Click Submit or Refresh to generate predictions.")
+
 # Streamlit app details
 st.set_page_config(page_title="Financial Analysis", layout="wide")
 
@@ -483,54 +533,6 @@ if (submit or refresh) and st.session_state.ticker:
                 # Add new prediction at the beginning of the list (newest first)
                 st.session_state.predictions.insert(0, new_prediction)
                 
-@st.fragment(run_every=5)
-def display_predictions():
-    """Display and verify predictions with auto-refresh."""
-    # Verification Logic
-    if 'predictions' in st.session_state and st.session_state.predictions:
-        # Update all predictions with results
-        for i, pred in enumerate(st.session_state.predictions):
-            # Only check if pending or wait message
-            if any(pred.get(f"t+{k} Result") not in ["✅ Correct", "❌ Incorrect", "Neutral", "Error"] for k in [1, 5, 30]):
-                updated_pred = check_prediction_result(pred, pred['Ticker'])
-                st.session_state.predictions[i] = updated_pred
-
-    # Display Logic
-    st.subheader("Predictions")
-    if 'predictions' in st.session_state and st.session_state.predictions:
-        # Create a display dataframe (hide internal columns)
-        predictions_df = pd.DataFrame(st.session_state.predictions)
-        
-        # Filter columns to show
-        cols_to_show = [
-            "Ticker", "Timestamp", "Identified Candlestick Patterns",
-            "t+1 Prediction", "t+5 Prediction", "t+30 Prediction",
-            "t+1 Result", "t+5 Result", "t+30 Result"
-        ]
-        
-        # Ensure columns exist (for old dummy data compatibility)
-        available_cols = [c for c in cols_to_show if c in predictions_df.columns]
-        display_df = predictions_df[available_cols]
-        
-        # Apply styling
-        def highlight_results(val):
-            if isinstance(val, str):
-                if "✅" in val:
-                    return 'background-color: #d4edda; color: #155724' # Green
-                elif "❌" in val:
-                    return 'background-color: #f8d7da; color: #721c24' # Red
-                elif "⏳" in val:
-                    return 'background-color: #fff3cd; color: #856404' # Yellow
-            return ''
-
-        # Apply style to Result columns
-        result_cols = [c for c in available_cols if "Result" in c]
-        styled_df = display_df.style.map(highlight_results, subset=result_cols)
-        
-        st.dataframe(styled_df, use_container_width=True, hide_index=True)
-    else:
-        st.info("No predictions yet. Click Submit or Refresh to generate predictions.")
-
     # Call the fragment
     display_predictions()
 
