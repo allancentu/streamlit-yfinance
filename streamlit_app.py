@@ -213,17 +213,24 @@ def batch_update_predictions(predictions):
         print(f"Batch fetching for: {tickers_to_fetch}")
         data = yf.download(tickers=list(tickers_to_fetch), period="5d", interval="1m", group_by='ticker', progress=False, auto_adjust=True)
         
+        print(f"DEBUG: Downloaded data. Empty: {data.empty}, Shape: {data.shape if not data.empty else 'N/A'}")
+        if not data.empty:
+            print(f"DEBUG: Columns type: {type(data.columns)}, Levels: {data.columns.levels if hasattr(data.columns, 'levels') else 'Not MultiIndex'}")
+        
         # Handle single ticker case (columns are not MultiIndex if single ticker)
         if len(tickers_to_fetch) == 1:
             # Reformat to match MultiIndex structure for consistent processing: data[Ticker][Close]
             ticker = list(tickers_to_fetch)[0]
             # Make it a MultiIndex with ticker as top level
             data.columns = pd.MultiIndex.from_product([[ticker], data.columns])
+            print(f"DEBUG: Converted single ticker to MultiIndex")
             
         # Process each pending prediction
         for i in pending_indices:
             pred = predictions[i]
             ticker = pred['Ticker']
+            
+            print(f"DEBUG: Processing prediction {i} for ticker {ticker}")
             
             if ticker not in data.columns.levels[0]:
                 continue
