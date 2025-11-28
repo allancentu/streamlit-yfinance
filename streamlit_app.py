@@ -250,6 +250,8 @@ def batch_update_predictions(predictions):
             else:
                  ticker_data.index = ticker_data.index.tz_convert(now.tzinfo)
             
+            print(f"DEBUG: Timezone conversion done for {ticker}")
+            
             last_candle_time = pd.to_datetime(pred['Last Candle Time'])
             if last_candle_time.tzinfo is None:
                 last_candle_time = last_candle_time.tz_localize(now.tzinfo)
@@ -258,7 +260,10 @@ def batch_update_predictions(predictions):
             
             initial_close = pred['Initial Close']
             
+            print(f"DEBUG: Starting horizon loop for {ticker}")
+            
             for h, minutes in horizons.items():
+                print(f"DEBUG: Checking horizon {h} for {ticker}")
                 result_key = f"{h} Result"
                 pred_key = f"{h} Prediction"
                 
