@@ -233,11 +233,16 @@ def batch_update_predictions(predictions):
             print(f"DEBUG: Processing prediction {i} for ticker {ticker}")
             
             if ticker not in data.columns.levels[0]:
+                print(f"DEBUG: Ticker {ticker} not in data columns, skipping")
                 continue
-                
+            
+            print(f"DEBUG: Getting data for {ticker}")
             ticker_data = data[ticker].dropna()
             if ticker_data.empty:
+                print(f"DEBUG: Ticker {ticker} data is empty after dropna, skipping")
                 continue
+            
+            print(f"DEBUG: Ticker {ticker} has {len(ticker_data)} rows of data")
                 
             # Ensure index is timezone aware and matches system time
             if ticker_data.index.tz is None:
