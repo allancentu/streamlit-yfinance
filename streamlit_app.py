@@ -327,7 +327,7 @@ def display_predictions():
         result_cols = [c for c in available_cols if "Result" in c]
         styled_df = display_df.style.map(highlight_results, subset=result_cols)
         
-        st.dataframe(styled_df, use_container_width=True, hide_index=True)
+        st.dataframe(styled_df, width="stretch", hide_index=True)
     else:
         st.info("No predictions yet. Click Submit or Refresh to generate predictions.")
 
@@ -402,10 +402,10 @@ with col_ticker:
     ticker_input = st.text_input("Enter a stock ticker (e.g. AAPL)", value=st.session_state.ticker, label_visibility="collapsed", placeholder="Enter stock ticker (e.g. AAPL)")
 
 with col_submit:
-    submit = st.button("Submit", use_container_width=True)
+    submit = st.button("Submit", width="stretch")
 
 with col_refresh:
-    refresh = st.button("Refresh", use_container_width=True)
+    refresh = st.button("Refresh", width="stretch")
 
 # Handle button clicks
 if submit:
