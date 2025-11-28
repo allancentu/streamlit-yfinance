@@ -170,12 +170,13 @@ def check_prediction_result(prediction, ticker_symbol):
         last_candle_time = pd.to_datetime(prediction['Last Candle Time'])
         initial_close = prediction['Initial Close']
         
-        # Ensure last_candle_time is timezone-aware (UTC is best for comparison)
+        # Ensure last_candle_time is timezone-aware and convert to UTC
         if last_candle_time.tzinfo is None:
-            # If naive, assume it was created in local time or UTC? 
-            # yfinance usually returns aware timestamps. If stringified, it might have lost it or kept offset.
-            # Let's assume it's consistent with what yfinance gave us.
-            pass
+            # If naive, assume UTC to be safe, or try to infer? 
+            # Ideally we should have stored it with timezone.
+            last_candle_time = last_candle_time.replace(tzinfo=datetime.timezone.utc)
+        else:
+            last_candle_time = last_candle_time.astimezone(datetime.timezone.utc)
         
         # Define horizons in minutes
         horizons = {
@@ -195,104 +196,95 @@ def check_prediction_result(prediction, ticker_symbol):
             if prediction[result_key] in ["✅ Correct", "❌ Incorrect", "Neutral"]:
                 continue
                 
-            target_time = last_candle_time + timedelta(minutes=minutes)
+            target_time_utc = last_candle_time + timedelta(minutes=minutes)
             
-            # Current time (aware)
-            now = dt.now().astimezone()
-            
-            # Ensure target_time is comparable to now
-            if target_time.tzinfo is None:
-                # If target is naive, assume local for comparison with now
-                target_time_aware = target_time.replace(tzinfo=now.tzinfo)
-            else:
-                target_time_aware = target_time
+            # Current time (UTC)
+            now_utc = datetime.datetime.now(datetime.timezone.utc)
             
             # Define wait times (when to allow checking)
-            # We check 1 minute after the candle closes to ensure data availability
             wait_delays = {
-                't+1': 2,   # 1 min candle + 1 min buffer
-                't+5': 6,   # 5 min horizon + 1 min buffer
-                't+30': 31  # 30 min horizon + 1 min buffer
+                't+1': 2,
+                't+5': 6,
+                't+30': 31
             }
             
-            check_time = target_time_aware + timedelta(minutes=1) # Wait 1 min after target time
+            check_time_utc = target_time_utc + timedelta(minutes=1)
             
             # If current time is before the check time, tell user to wait
-            if check_time > now:
-                # Format check time for display
-                wait_time_str = check_time.strftime("%H:%M")
+            if check_time_utc > now_utc:
+                # Convert to local time for display if possible, or show UTC
+                # Showing UTC is less ambiguous for debugging
+                wait_time_str = check_time_utc.strftime("%H:%M UTC")
                 prediction[result_key] = f"⏳ Wait until {wait_time_str}"
                 continue
             
             # Target time is in the past, try to fetch data
             try:
-                # Fetch 1m data for the last day (keeping period="1d" as requested)
+                # Fetch 1m data for the last day
                 df = stock.history(period="1d", interval="1m")
                 
+                # Check if data is fresh enough
+                if not df.empty:
+                    last_dt = df.index[-1]
+                    # Convert to UTC
+                    if last_dt.tzinfo is None:
+                        last_dt_utc = last_dt.replace(tzinfo=datetime.timezone.utc)
+                    else:
+                        last_dt_utc = last_dt.astimezone(datetime.timezone.utc)
+                        
+                    # If the latest data is older than our target, we definitely need more data (or market is closed)
+                    if last_dt_utc < target_time_utc:
+                        # Try fetching 5d to be sure
+                        df = stock.history(period="5d", interval="1m")
+
                 if df.empty:
-                    # Try 5d if 1d is empty (e.g. weekend/holiday)
                     df = stock.history(period="5d", interval="1m")
                 
                 if df.empty:
-                    # Still empty
-                    next_retry = dt.now() + timedelta(minutes=1)
-                    prediction[result_key] = f"⏳ No data yet, retrying..."
+                    prediction[result_key] = f"⏳ No data yet..."
                     continue
                 
-                # Normalize timezones for comparison
-                # We want to find the row in df where index == target_time
-                
-                # If df index is aware and target_time is aware, we can compare directly if we handle offsets
-                # Best way is to convert both to UTC
-                
+                # Convert df index to UTC
                 if df.index.tz is not None:
                     df_index_utc = df.index.tz_convert('UTC')
                 else:
-                    # If df index is naive, assume it's local/market time? yfinance is usually aware.
-                    # If naive, localize to UTC (assuming input was UTC) or just keep naive if target is naive
-                    df_index_utc = df.index
-                    
-                if target_time.tzinfo is not None:
-                    target_time_utc = target_time.astimezone(datetime.timezone.utc)
-                else:
-                    target_time_utc = target_time
+                    # If naive, assume UTC (or ET? yfinance usually returns ET with offset or UTC)
+                    # Let's assume the index is correct as provided by yfinance
+                    df_index_utc = df.index.tz_localize('UTC')
                 
-                # Find the candle at target_time
-                # We look for the exact minute
+                # Find the candle at target_time_utc
                 target_candle = None
                 
-                # Robust search: look for exact match or very close match
-                # Since we are dealing with 1m candles, we expect an entry at target_time (start of the minute)
-                
-                # Convert target_time_utc to the same timezone as df.index if possible for easier debugging
-                # But comparing UTC timestamps is safest
-                
-                # Let's iterate and compare timestamps
+                # Robust search
                 for idx, row in df.iterrows():
-                    # Convert idx to UTC for comparison
+                    # idx is already in df_index_utc (if we iterated over that) 
+                    # but iterrows gives original index.
+                    
                     if idx.tzinfo is not None:
                         idx_utc = idx.astimezone(datetime.timezone.utc)
                     else:
-                        idx_utc = idx
+                        idx_utc = idx.replace(tzinfo=datetime.timezone.utc)
                         
-                    # Check if timestamps match (ignoring seconds/microseconds)
-                    # We use a small tolerance or exact minute match
-                    if abs((idx_utc - target_time_utc).total_seconds()) < 30: # Within 30 seconds
+                    # Check match
+                    if abs((idx_utc - target_time_utc).total_seconds()) < 30:
                         target_candle = row
                         break
                 
                 if target_candle is None:
-                    # If exact match not found, it might be a gap or data delay.
-                    # Check the latest available time in df to see if we are just behind
+                    # Debug info
                     latest_data_time = df.index[-1]
                     if latest_data_time.tzinfo is not None:
-                        latest_str = latest_data_time.astimezone(None).strftime('%H:%M')
+                        latest_utc = latest_data_time.astimezone(datetime.timezone.utc)
                     else:
-                        latest_str = latest_data_time.strftime('%H:%M')
-                        
-                    # If enough time has passed (e.g. > 10 mins after target), maybe we can assume it's missing?
-                    # For now, just wait.
-                    prediction[result_key] = f"⏳ Data pending... (Latest: {latest_str})"
+                        latest_utc = latest_data_time.replace(tzinfo=datetime.timezone.utc)
+                    
+                    latest_str = latest_utc.strftime('%H:%M UTC')
+                    
+                    # If we are way past the target time and still no data, maybe market closed?
+                    if (now_utc - target_time_utc).total_seconds() > 3600: # 1 hour past
+                         prediction[result_key] = f"⚠️ Market Closed? (Latest: {latest_str})"
+                    else:
+                         prediction[result_key] = f"⏳ Data pending... (Latest: {latest_str})"
                     continue
                 
                 target_close = float(target_candle['Close'])
