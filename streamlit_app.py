@@ -731,8 +731,8 @@ if lucky:
         try:
             # Batch download data for all 30 tickers
             # We need 1m data, last 5 days to be safe
-            # Using raise_errors=False to skip delisted/invalid tickers
-            data = yf.download(tickers=TOP_30_TICKERS, period="5d", interval="1m", group_by='ticker', progress=False, auto_adjust=True, raise_errors=False)
+            # Note: yfinance will skip delisted/invalid tickers automatically
+            data = yf.download(tickers=TOP_30_TICKERS, period="5d", interval="1m", group_by='ticker', progress=False, auto_adjust=True)
             
             # Load model once
             model, cdl_labels = load_model()
@@ -818,15 +818,9 @@ if lucky:
                 
         except Exception as e:
             st.error(f"Batch prediction failed: {e}")
-
-# Trigger analysis if Submit, Ticker Changed, or Lucky (for the main ticker)
-if (submit or ticker_changed or lucky) and st.session_state.ticker:
-    ticker = st.session_state.ticker
     
-    if not ticker.strip():
-        st.error("Please provide a valid stock ticker.")
-    else:
-        run_analysis(ticker)
+    # After batch processing, show the chart for the target ticker
+    run_analysis(st.session_state.ticker)
 
 # Call the fragment always, outside the conditional blocks
 display_predictions()
