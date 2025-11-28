@@ -164,10 +164,11 @@ def batch_update_predictions(predictions):
     """
     Update all pending predictions by checking each one.
     """
-    for pred in predictions:
+    for i, pred in enumerate(predictions):
         ticker = pred.get('Ticker')
         if ticker:
-            check_prediction_result(pred, ticker)
+            # Ensure we update the prediction in the list
+            predictions[i] = check_prediction_result(pred, ticker)
     return predictions
 
 def check_prediction_result(prediction, ticker_symbol):
@@ -185,10 +186,13 @@ def check_prediction_result(prediction, ticker_symbol):
         last_candle_time = pd.to_datetime(prediction['Last Candle Time'])
         initial_close = prediction['Initial Close']
         
-        # Convert last_candle_time to local system timezone for consistency with datetime.now()
-        # This ensures "Wait until..." messages match the user's wall clock
+        # Convert to naive local timezone for consistent comparisons
+        # First convert to local timezone, then remove timezone info
         if last_candle_time.tzinfo is not None:
-            last_candle_time = last_candle_time.astimezone(None) # None = local timezone
+            # Convert to local timezone first, then make naive
+            import pytz
+            local_tz = dt.now().astimezone().tzinfo
+            last_candle_time = last_candle_time.tz_convert(local_tz).tz_localize(None)
         
         # Define horizons in minutes
         horizons = {
@@ -212,12 +216,6 @@ def check_prediction_result(prediction, ticker_symbol):
             
             # Current time (naive, local)
             now = dt.now()
-            # If target_time is aware, make now aware (local) or make target_time naive (local)
-            # Since we converted last_candle_time to local (astimezone(None)), it might still be aware.
-            # Let's ensure we compare apples to apples.
-            if target_time.tzinfo is not None:
-                # target_time is aware (local), so we need aware now
-                now = dt.now().astimezone()
             
             # Define wait times (when to allow checking)
             # We check 1 minute after the candle closes to ensure data availability
@@ -251,8 +249,10 @@ def check_prediction_result(prediction, ticker_symbol):
                     prediction[result_key] = f"⏳ Wait until {next_retry.strftime('%H:%M')}"
                     continue
                 
-                # Convert df index to local timezone to match target_time
-                df.index = df.index.tz_convert(None) if target_time.tzinfo is None else df.index.tz_convert(target_time.tzinfo)
+                # Convert df index to naive local timezone to match target_time
+                if df.index.tz is not None:
+                    local_tz = dt.now().astimezone().tzinfo
+                    df.index = df.index.tz_convert(local_tz).tz_localize(None)
                 
                 # Find the candle at target_time (or very close to it)
                 # We look for the exact minute
