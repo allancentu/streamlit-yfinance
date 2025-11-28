@@ -3,6 +3,8 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import altair as alt
+import mplfinance as mpf
+import matplotlib.pyplot as plt
 
 # Streamlit app details
 st.set_page_config(page_title="Financial Analysis", layout="wide")
@@ -26,6 +28,25 @@ def safe_format(value, fmt="{:.2f}", fallback="N/A"):
         return fmt.format(value) if value is not None else fallback
     except (ValueError, TypeError):
         return fallback
+
+def plot_candlestick(data, ticker):
+    """Plot candlestick chart using mplfinance."""
+    try:
+        # Create the candlestick chart
+        fig, axes = mpf.plot(
+            data,
+            type='candle',
+            style='yahoo',
+            volume=True,
+            figratio=(16, 9),
+            figsize=(12, 7),
+            returnfig=True,
+            title=f"{ticker} Stock Price"
+        )
+        return fig
+    except Exception as e:
+        st.error(f"Error creating candlestick chart: {e}")
+        return None
 
 # Get next trading date based on earnings date
 def get_next_trading_day(df, date):
@@ -63,8 +84,10 @@ if submit:
                 selected_period, interval = period_map.get(period, ("1mo", "1d"))
                 history = stock.history(period=selected_period, interval=interval)
                 
-                chart_data = pd.DataFrame(history["Close"])
-                st.line_chart(chart_data)
+                # Display candlestick chart
+                fig = plot_candlestick(history, ticker.upper())
+                if fig:
+                    st.pyplot(fig)
 
                 col1, col2, col3 = st.columns(3)
 
