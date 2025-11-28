@@ -411,7 +411,8 @@ def display_predictions():
     """Display and verify predictions with auto-refresh."""
     # Verification Logic (Batch Update)
     if 'predictions' in st.session_state and st.session_state.predictions:
-        st.session_state.predictions = batch_update_predictions(st.session_state.predictions)
+        with st.spinner("Updating predictions..."):
+            st.session_state.predictions = batch_update_predictions(st.session_state.predictions)
 
     # Display Logic
     st.subheader("Predictions")
