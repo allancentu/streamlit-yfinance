@@ -11,6 +11,7 @@ import io
 import time
 from PIL import Image
 from datetime import datetime as dt, timedelta
+import pytz
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, classification_report
 
 # Import do_network from stock_cnn.py
@@ -167,10 +168,19 @@ def check_prediction_result(prediction, ticker_symbol):
             return prediction
             
         # Parse the stored time
-        last_candle_time = pd.to_datetime(prediction['Last Candle Time'])
+        time_str = prediction['Last Candle Time']
+        if isinstance(time_str, str) and time_str.endswith(" ET"):
+            time_str = time_str[:-3]
+            last_candle_time = pd.to_datetime(time_str)
+            # It was ET, so localize if naive
+            if last_candle_time.tzinfo is None:
+                last_candle_time = pytz.timezone('America/New_York').localize(last_candle_time)
+        else:
+            last_candle_time = pd.to_datetime(time_str)
+        
         initial_close = prediction['Initial Close']
         
-        # Ensure last_candle_time is timezone-aware and convert to UTC
+        # Ensure last_candle_time is timezone-aware and convert to UTC for internal logic
         if last_candle_time.tzinfo is None:
             # If naive, assume UTC to be safe, or try to infer? 
             # Ideally we should have stored it with timezone.
@@ -212,9 +222,10 @@ def check_prediction_result(prediction, ticker_symbol):
             
             # If current time is before the check time, tell user to wait
             if check_time_utc > now_utc:
-                # Convert to local time for display if possible, or show UTC
-                # Showing UTC is less ambiguous for debugging
-                wait_time_str = check_time_utc.strftime("%H:%M UTC")
+                # Convert to Eastern Time for display
+                et_tz = pytz.timezone('America/New_York')
+                check_time_et = check_time_utc.astimezone(et_tz)
+                wait_time_str = check_time_et.strftime("%H:%M ET")
                 prediction[result_key] = f"⏳ Wait until {wait_time_str}"
                 continue
             
@@ -278,7 +289,10 @@ def check_prediction_result(prediction, ticker_symbol):
                     else:
                         latest_utc = latest_data_time.replace(tzinfo=datetime.timezone.utc)
                     
-                    latest_str = latest_utc.strftime('%H:%M UTC')
+                    # Convert to ET for display
+                    et_tz = pytz.timezone('America/New_York')
+                    latest_et = latest_utc.astimezone(et_tz)
+                    latest_str = latest_et.strftime('%H:%M ET')
                     
                     # If we are way past the target time and still no data, maybe market closed?
                     if (now_utc - target_time_utc).total_seconds() > 3600: # 1 hour past
@@ -660,11 +674,28 @@ def process_ticker(ticker, render_chart=True):
                 initial_close = float(last_candle['Close'])
                 last_candle_time = history.index[-1]
                 
+                # Convert timestamps to Eastern Time for display
+                et_tz = pytz.timezone('America/New_York')
+                
+                # Current time in ET
+                timestamp_et = dt.now(et_tz).strftime("%Y-%m-%d %H:%M:%S ET")
+                
+                # Last candle time in ET
+                if last_candle_time.tzinfo is None:
+                    # If naive, assume UTC and convert (or assume ET if yfinance returned naive)
+                    # yfinance usually returns aware. If naive, it's often market time (ET).
+                    # Let's assume it's aware or we make it aware as UTC then convert.
+                    # Safest is to assume it's already in correct time if naive, but let's try to handle aware.
+                    last_candle_et_str = str(last_candle_time)
+                else:
+                    last_candle_et = last_candle_time.astimezone(et_tz)
+                    last_candle_et_str = last_candle_et.strftime("%Y-%m-%d %H:%M:%S ET")
+                
                 # Create data for new prediction
                 new_prediction = {
                     "Ticker": ticker,
-                    "Timestamp": dt.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "Last Candle Time": str(last_candle_time),
+                    "Timestamp": timestamp_et,
+                    "Last Candle Time": last_candle_et_str,
                     "Initial Close": initial_close,
                     "Identified Candlestick Patterns": patterns_str,
                     "t+1 Prediction": t1_pred,
