@@ -13,7 +13,7 @@ from PIL import Image
 from datetime import datetime as dt, timedelta
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, classification_report
 
-# Top 30 US Stocks (approximate)
+# Top 30 US Stocks (approximate) - excluding delisted/merged companies
 TOP_30_TICKERS = [
     "NVDA", "AAPL", "MSFT", "GOOGL", "AMZN", "AVGO", "META", "TSLA", "BRK-B", "LLY", 
     "WMT", "JPM", "V", "ORCL", "MA", "XOM", "NFLX", "COST", "ABBV", "PLTR", 
@@ -731,7 +731,8 @@ if lucky:
         try:
             # Batch download data for all 30 tickers
             # We need 1m data, last 5 days to be safe
-            data = yf.download(tickers=TOP_30_TICKERS, period="5d", interval="1m", group_by='ticker', progress=False, auto_adjust=True)
+            # Using raise_errors=False to skip delisted/invalid tickers
+            data = yf.download(tickers=TOP_30_TICKERS, period="5d", interval="1m", group_by='ticker', progress=False, auto_adjust=True, raise_errors=False)
             
             # Load model once
             model, cdl_labels = load_model()
@@ -746,9 +747,10 @@ if lucky:
                 for ticker in TOP_30_TICKERS:
                     if ticker == target_ticker:
                         continue
-                        
-                    if ticker not in data.columns.levels[0]:
-                        continue
+                    
+                    try:
+                        if ticker not in data.columns.levels[0]:
+                            continue
                         
                     ticker_data = data[ticker].dropna()
                     if ticker_data.empty:
