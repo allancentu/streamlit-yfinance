@@ -307,10 +307,12 @@ def batch_update_predictions(predictions):
                             pred[result_key] = "❌ Incorrect"
                             
                 except Exception as e:
+                    st.error(f"Error verification {ticker} {h}: {e}")
                     print(f"Error verification {ticker} {h}: {e}")
                     continue
 
     except Exception as e:
+        st.error(f"Batch update error: {e}")
         print(f"Batch update error: {e}")
         
     return predictions
