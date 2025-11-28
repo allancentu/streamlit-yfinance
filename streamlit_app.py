@@ -740,25 +740,33 @@ def process_ticker(ticker, render_chart=True):
 st.title("Financial Analysis")
 
 # Ticker input and buttons in the main area
-col_ticker, col_submit, col_lucky = st.columns([3, 1, 1])
-with col_ticker:
-    ticker_input = st.text_input("Enter a stock ticker (e.g. AAPL)", value=st.session_state.ticker, label_visibility="collapsed", placeholder="Enter stock ticker (e.g. AAPL)")
+# Ticker input and buttons in the main area
+# Use a form to prevent double-submission/race conditions
+with st.form(key='analysis_form'):
+    col_ticker, col_submit, col_lucky = st.columns([3, 1, 1])
+    with col_ticker:
+        # We use a key for the widget, but we also want to pre-fill it.
+        # Note: modifying session_state.ticker directly from here is tricky if we want to update it only on submit.
+        # So we use a local variable and update session state on submit.
+        ticker_val = st.text_input("Enter a stock ticker (e.g. AAPL)", value=st.session_state.ticker, label_visibility="collapsed", placeholder="Enter stock ticker (e.g. AAPL)")
+    
+    with col_submit:
+        submitted = st.form_submit_button("Submit", use_container_width=True)
+        
+    with col_lucky:
+        # Feeling Lucky as a separate submit button in the same form
+        # This allows it to be aligned nicely
+        lucky_submitted = st.form_submit_button("Feeling Lucky", use_container_width=True)
 
-with col_submit:
-    submit = st.button("Submit", width="stretch")
-
-with col_lucky:
-    lucky = st.button("Feeling Lucky", width="stretch")
-
-# Handle button clicks
-# Handle ticker updates and button clicks
-ticker_changed = False
-clean_input = ticker_input.strip().upper()
-
-# Check if input has changed (e.g. user typed new ticker and hit Enter, or clicked a button)
-if clean_input and clean_input != st.session_state.ticker:
-    st.session_state.ticker = clean_input
-    ticker_changed = True
+# Handle form submission
+if submitted:
+    clean_input = ticker_val.strip().upper()
+    if clean_input:
+        st.session_state.ticker = clean_input
+        with st.spinner(f'Analyzing {clean_input}...', show_time=True):
+            process_ticker(clean_input, render_chart=True)
+    else:
+        st.error("Please provide a valid stock ticker.")
 
 # 1. Auto-load AAPL on first run
 if 'first_run' not in st.session_state:
@@ -769,17 +777,8 @@ if st.session_state.first_run:
     with st.spinner('Performing initial analysis for AAPL...', show_time=True):
         process_ticker('AAPL', render_chart=True)
 
-# 2. Submit or Ticker Changed
-if (submit or ticker_changed) and st.session_state.ticker:
-    ticker = st.session_state.ticker
-    if not ticker.strip():
-        st.error("Please provide a valid stock ticker.")
-    else:
-        with st.spinner(f'Analyzing {ticker}...', show_time=True):
-            process_ticker(ticker, render_chart=True)
-
 # 3. Feeling Lucky (Batch Processing)
-if lucky:
+if lucky_submitted:
     # Use the first stock in the list for the chart
     first_ticker = TOP_30_STOCKS[0]
     st.session_state.ticker = first_ticker # Update session state ticker
@@ -808,58 +807,3 @@ if lucky:
 
 # Call the fragment always, outside the conditional blocks
 display_predictions()
-
-# Manual Verification Tool (Debug)
-with st.expander("🛠️ Manual Verification (Debug)"):
-    st.caption("Use this tool to check if data exists for a specific time.")
-    c1, c2, c3 = st.columns(3)
-    v_ticker = c1.text_input("Ticker", value="AAPL", key="v_ticker")
-    v_date = c2.date_input("Date", value=dt.now(), key="v_date")
-    v_time = c3.time_input("Time (Local)", value=dt.now().time(), key="v_time")
-    
-    if st.button("Check Data Availability"):
-        try:
-            # Construct target datetime (local)
-            target_dt = datetime.combine(v_date, v_time)
-            # Assume local timezone for input
-            target_dt = target_dt.replace(tzinfo=dt.now().astimezone().tzinfo)
-            
-            st.write(f"Looking for data at: **{target_dt}** (Local) / **{target_dt.astimezone(datetime.timezone.utc)}** (UTC)")
-            
-            v_stock = yf.Ticker(v_ticker)
-            # Fetch data with prepost=True
-            v_df = v_stock.history(period="5d", interval="1m", prepost=True)
-            
-            if v_df.empty:
-                st.error("No data found for the last 5 days.")
-            else:
-                # Convert df to UTC for comparison
-                if v_df.index.tz is None:
-                    v_df.index = v_df.index.tz_localize('UTC')
-                else:
-                    v_df.index = v_df.index.tz_convert('UTC')
-                    
-                target_utc = target_dt.astimezone(datetime.timezone.utc)
-                
-                # Find closest match
-                closest_idx = None
-                min_diff = float('inf')
-                
-                for idx in v_df.index:
-                    diff = abs((idx - target_utc).total_seconds())
-                    if diff < min_diff:
-                        min_diff = diff
-                        closest_idx = idx
-                        
-                st.write(f"Closest data point found: **{closest_idx}** (UTC)")
-                st.write(f"Difference: **{min_diff:.1f} seconds**")
-                
-                if min_diff < 60:
-                    st.success(f"✅ Match found! Close: {v_df.loc[closest_idx]['Close']}")
-                else:
-                    st.warning("⚠️ No exact match found within 1 minute.")
-                    
-                st.dataframe(v_df.tail(5))
-                
-        except Exception as e:
-            st.error(f"Error: {e}")
