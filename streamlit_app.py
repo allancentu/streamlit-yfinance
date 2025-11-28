@@ -222,18 +222,12 @@ def check_prediction_result(prediction, ticker_symbol):
             
             # Target time is in the past, try to fetch data
             try:
-                # Fetch a wider window to ensure we get the data
-                # Fetch from target_time - 2m to target_time + 2m
-                # We need to convert target_time back to UTC or just pass it, yfinance handles it
-                start_fetch = target_time - timedelta(minutes=2)
-                end_fetch = target_time + timedelta(minutes=2)
+                # Fetch 1m data for the last day (more robust than specific start/end times)
+                df = stock.history(period="1d", interval="1m")
                 
-                # Clamp end_fetch to now to avoid future data errors
-                if end_fetch > now:
-                    end_fetch = now
-                
-                # Fetch 1m data
-                df = stock.history(start=start_fetch, end=end_fetch, interval="1m")
+                # If 1d is empty, try 5d (e.g. over weekend)
+                if df.empty:
+                    df = stock.history(period="5d", interval="1m")
                 
                 if df.empty:
                     # Instead of "Data Unavailable", wait 1 more minute and try again
