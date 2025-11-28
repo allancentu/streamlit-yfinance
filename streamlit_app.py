@@ -270,6 +270,8 @@ def batch_update_predictions(predictions):
                 # Skip if already final
                 if pred[result_key] in ["✅ Correct", "❌ Incorrect", "Neutral"]:
                     continue
+                
+                print(f"DEBUG: Past skip check for {ticker} {h}, result is: {pred[result_key]}")
                     
                 target_time = last_candle_time + timedelta(minutes=minutes)
                 
