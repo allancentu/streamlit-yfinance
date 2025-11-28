@@ -533,9 +533,9 @@ if (submit or refresh) and st.session_state.ticker:
                 # Add new prediction at the beginning of the list (newest first)
                 st.session_state.predictions.insert(0, new_prediction)
                 
-    # Call the fragment
-    display_predictions()
+        except Exception as e:
+            st.exception(f"An error occurred: {e}")
 
-except Exception as e:
-    st.exception(f"An error occurred: {e}")
+# Call the fragment always, outside the conditional blocks
+display_predictions()
 
