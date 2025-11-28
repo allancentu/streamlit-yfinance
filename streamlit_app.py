@@ -531,12 +531,9 @@ def display_predictions():
     else:
         st.info("No predictions yet. Click Submit or Refresh to generate predictions.")
 
-# Call the fragment
-display_predictions()
+    # Call the fragment
+    display_predictions()
 
-        except Exception as e:
-            st.exception(f"An error occurred: {e}")
-
-        except Exception as e:
-            st.exception(f"An error occurred: {e}")
+except Exception as e:
+    st.exception(f"An error occurred: {e}")
 
