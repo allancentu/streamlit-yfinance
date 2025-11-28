@@ -2,203 +2,346 @@ import datetime
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import altair as alt
+import plotly.graph_objects as go
 import mplfinance as mpf
-import matplotlib.pyplot as plt
+import tensorflow as tf
+import numpy as np
+import io
+from PIL import Image
+from datetime import datetime as dt, timedelta
+
+# Import do_network from stock_cnn.py
+# We need to make sure stock_cnn.py is in the path or just copy the function if it's easier
+# Since it's in the same directory, we can try to import it.
+# However, stock_cnn.py has a lot of top-level code that runs on import.
+# To avoid running that code, it's safer to copy the do_network function here or wrap it in stock_cnn.py
+# Given the constraints, I will copy the necessary parts of do_network here to ensure stability.
+
+def do_network(cdl_columns, dropout_rate=0.35):
+    """
+    Cria um modelo de saída dupla para análise de padrões de candlestick.
+    Copied from stock_cnn.py to avoid side effects on import.
+    """
+    num_cdl_patterns = len(cdl_columns)
+    
+    inputs = tf.keras.layers.Input(shape=(128,128,3), name='input_image')
+
+    # Bloco 1: 32 filtros
+    c1 = tf.keras.layers.Conv2D(32, 3, padding='same', activation='relu')(inputs)
+    c1 = tf.keras.layers.BatchNormalization()(c1)
+    c1 = tf.keras.layers.Conv2D(32, 3, padding='same', activation='relu')(c1)
+    s2 = tf.keras.layers.MaxPool2D(pool_size=(2, 2))(c1)
+    s2 = tf.keras.layers.Dropout(dropout_rate)(s2)
+
+    # Bloco 2: 64 filtros
+    c3 = tf.keras.layers.Conv2D(64, 3, padding='same', activation='relu')(s2)
+    c3 = tf.keras.layers.BatchNormalization()(c3)
+    c3 = tf.keras.layers.Conv2D(64, 3, padding='same', activation='relu')(c3)
+    s4 = tf.keras.layers.MaxPool2D(pool_size=(2, 2))(c3)
+    s4 = tf.keras.layers.Dropout(dropout_rate)(s4)
+
+    # Bloco 3: 128 filtros
+    c5 = tf.keras.layers.Conv2D(128, 3, padding='same', activation='relu')(s4)
+    c5 = tf.keras.layers.BatchNormalization()(c5)
+    c5 = tf.keras.layers.Conv2D(128, 3, padding='same', activation='relu')(c5)
+    s6 = tf.keras.layers.MaxPool2D(pool_size=(2, 2))(c5)
+    s6 = tf.keras.layers.Dropout(dropout_rate)(s6)
+
+    # Achata características da CNN
+    flat = tf.keras.layers.Flatten()(s6)
+
+    # Camadas densas para processamento de características
+    f7 = tf.keras.layers.Dense(256, activation='relu')(flat)
+    f7 = tf.keras.layers.BatchNormalization()(f7)
+    f7 = tf.keras.layers.Dropout(dropout_rate)(f7)
+    f8 = tf.keras.layers.Dense(128, activation='relu')(f7)
+    f8 = tf.keras.layers.BatchNormalization()(f8)
+    f8 = tf.keras.layers.Dropout(dropout_rate)(f8)
+
+    # Saída 1: Predições de Padrões CDL
+    cdl_patterns = tf.keras.layers.Dense(
+        num_cdl_patterns,
+        activation='sigmoid',
+        name='cdl_patterns'
+    )(f8)
+
+    # Cabeça MLP: Predições de Direção de Preço
+    mlp_hidden = tf.keras.layers.Dense(128, activation='relu')(cdl_patterns)
+    mlp_hidden = tf.keras.layers.BatchNormalization()(mlp_hidden)
+    mlp_hidden = tf.keras.layers.Dropout(dropout_rate)(mlp_hidden)
+
+    # Saída 2: Predições de Direção de Preço
+    price_directions = tf.keras.layers.Dense(
+        6,
+        activation='sigmoid',
+        name='price_directions'
+    )(mlp_hidden)
+
+    return tf.keras.models.Model(
+        inputs=inputs,
+        outputs=[cdl_patterns, price_directions],
+        name='cnn_mlp_dual_output'
+    )
+
+@st.cache_resource
+def load_model():
+    """Load the trained model with weights."""
+    # Dummy columns to define architecture (assuming 20 patterns as per default)
+    # We label them generically since we don't have the original metadata
+    dummy_cdl_columns = [f"Pattern_{i}" for i in range(20)]
+    
+    model = do_network(dummy_cdl_columns)
+    try:
+        model.load_weights('best_model.weights.h5')
+        return model, dummy_cdl_columns
+    except Exception as e:
+        st.error(f"Failed to load model weights: {e}")
+        return None, None
+
+def generate_prediction_image(data):
+    """Generate a 128x128 candlestick image from data."""
+    # Normalize data for plotting (similar to training)
+    # Note: mpf.plot handles scaling, but we need to ensure the style matches training
+    # Training used: style='yahoo', volume=True/False (random), no axes
+    
+    buf = io.BytesIO()
+    
+    # Create a copy to avoid modifying original
+    plot_data = data.copy()
+    
+    # Plot configuration to match training as closely as possible
+    # Training code: figratio=(1, 1), figsize=(3, 3)
+    
+    # Custom style to remove grid and axes if needed, but 'yahoo' is standard
+    # We need to remove axes manually after plotting or use returnfig=True
+    
+    fig, axes = mpf.plot(
+        plot_data,
+        type='candle',
+        style='yahoo',
+        volume=True,
+        figratio=(1, 1),
+        figsize=(3, 3),
+        returnfig=True
+    )
+    
+    # Remove axes/ticks to match training data
+    for ax in axes:
+        ymin, ymax = ax.get_ylim()
+        if ymin == ymax:
+            ax.set_ylim(ymin - 0.5, ymax + 0.5)
+        ax.set_yticks([])
+        ax.set_xticks([])
+        ax.set_ylabel("")
+        ax.axis('off') # Turn off axis completely
+        
+    fig.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+    plt.close(fig)
+    
+    buf.seek(0)
+    img = Image.open(buf)
+    
+    # Convert to RGB (remove alpha if present)
+    if img.mode != 'RGB':
+        img = img.convert('RGB')
+        
+    # Resize to 128x128 as expected by model
+    img = img.resize((128, 128))
+    
+    return img
 
 # Streamlit app details
 st.set_page_config(page_title="Financial Analysis", layout="wide")
-with st.sidebar:
-    st.title("Financial Analysis")
-    ticker = st.text_input("Enter a stock ticker (e.g. AAPL)", "AAPL")
-    period = st.selectbox("Enter a time frame", ("1D", "5D", "1M", "6M", "YTD", "1Y", "5Y"), index=2)
-    submit = st.button("Submit")
 
-# Format market cap and enterprise value into something readable
-def format_value(value):
-    suffixes = ["", "K", "M", "B", "T"]
-    suffix_index = 0
-    while value >= 1000 and suffix_index < len(suffixes) - 1:
-        value /= 1000
-        suffix_index += 1
-    return f"${value:.1f}{suffixes[suffix_index]}"
+# Initialize session state for ticker
+if 'ticker' not in st.session_state:
+    st.session_state.ticker = 'AAPL'
 
-def safe_format(value, fmt="{:.2f}", fallback="N/A"):
-    try:
-        return fmt.format(value) if value is not None else fallback
-    except (ValueError, TypeError):
-        return fallback
+# Initialize session state for predictions table
+if 'predictions' not in st.session_state:
+    st.session_state.predictions = []
+
+def get_last_30_min_data(stock):
+    """
+    Fetch the last 30 minutes of data with 1-minute intervals.
+    If market is open, get the last 30 minutes from today.
+    If market is closed, get the last 30 minutes from the most recent trading day.
+    Returns up to 30 candles (or less if not enough data available).
+    """
+    # Try to get recent data with 1-minute intervals
+    # First, try fetching 1 day of 1-minute data
+    history_1d = stock.history(period="1d", interval="1m")
+    
+    if not history_1d.empty and len(history_1d) > 0:
+        # Take the last 30 candles (or all if less than 30)
+        last_30 = history_1d.tail(30)
+        return last_30
+    
+    # If no data from 1 day, try with 5 days
+    history_5d = stock.history(period="5d", interval="1m")
+    
+    if not history_5d.empty and len(history_5d) > 0:
+        # Take the last 30 candles (or all if less than 30)
+        last_30 = history_5d.tail(30)
+        return last_30
+    
+    # If still no data, return empty DataFrame
+    return pd.DataFrame()
 
 def plot_candlestick(data, ticker):
-    """Plot candlestick chart using mplfinance."""
+    """Plot candlestick chart using Plotly."""
     try:
         # Create the candlestick chart
-        fig, axes = mpf.plot(
-            data,
-            type='candle',
-            style='yahoo',
-            volume=True,
-            figratio=(16, 9),
-            figsize=(12, 7),
-            returnfig=True,
-            title=f"{ticker} Stock Price"
+        fig = go.Figure(data=[go.Candlestick(
+            x=data.index,
+            open=data['Open'],
+            high=data['High'],
+            low=data['Low'],
+            close=data['Close']
+        )])
+        
+        fig.update_layout(
+            title=f'Stock Price - Last 30 Minutes',
+            xaxis_rangeslider_visible=False,  # Hide default range slider for cleaner look
+            height=600,
+            template='plotly_white'
         )
+        
         return fig
     except Exception as e:
         st.error(f"Error creating candlestick chart: {e}")
         return None
 
-# Get next trading date based on earnings date
-def get_next_trading_day(df, date):
-    after = df[df.index > date]
-    return after.index[0] if not after.empty else None
+# Main app UI
+st.title("Financial Analysis")
 
-def get_same_or_next_trading_day(df, date):
-    if date in df.index:
-        return date
-    return get_next_trading_day(df, date)
+# Ticker input and buttons in the main area
+col_ticker, col_submit, col_refresh = st.columns([3, 1, 1])
+with col_ticker:
+    ticker_input = st.text_input("Enter a stock ticker (e.g. AAPL)", value=st.session_state.ticker, label_visibility="collapsed", placeholder="Enter stock ticker (e.g. AAPL)")
 
-# If Submit button is clicked
+with col_submit:
+    submit = st.button("Submit", use_container_width=True)
+
+with col_refresh:
+    refresh = st.button("Refresh", use_container_width=True)
+
+# Handle button clicks
 if submit:
+    st.session_state.ticker = ticker_input.strip().upper()
+
+if refresh and st.session_state.ticker:
+    # Refresh with current ticker
+    pass
+
+# If we have a ticker to display (either from submit or refresh)
+if (submit or refresh) and st.session_state.ticker:
+    ticker = st.session_state.ticker
+    
     if not ticker.strip():
         st.error("Please provide a valid stock ticker.")
     else:
         try:
             with st.spinner('Fetching data...', show_time=True):
                 # Retrieve stock data
-                stock = yf.Ticker(ticker.upper())
+                stock = yf.Ticker(ticker)
                 info = stock.info
 
                 st.subheader(f"{ticker} - {info.get('longName', 'N/A')}")
 
-                # Plot historical stock price data
-                period_map = {
-                    "1D": ("1d", "1h"),
-                    "5D": ("5d", "1d"),
-                    "1M": ("1mo", "1d"),
-                    "6M": ("6mo", "1wk"),
-                    "YTD": ("ytd", "1mo"),
-                    "1Y": ("1y", "1mo"),
-                    "5Y": ("5y", "3mo"),
-                }
-                selected_period, interval = period_map.get(period, ("1mo", "1d"))
-                history = stock.history(period=selected_period, interval=interval)
+                # Get last 30 minutes of data with 1-minute intervals
+                history = get_last_30_min_data(stock)
                 
-                # Display candlestick chart
-                fig = plot_candlestick(history, ticker.upper())
-                if fig:
-                    st.pyplot(fig)
+                if not history.empty:
+                    # Display candlestick chart
+                    fig = plot_candlestick(history, ticker)
+                    if fig:
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Show data info
+                    st.caption(f"Showing {len(history)} candles from {history.index[0]} to {history.index[-1]}")
+                else:
+                    st.warning("No recent 1-minute interval data available for this ticker. The market may be closed or this ticker may not support 1-minute data.")
 
-                col1, col2, col3 = st.columns(3)
-
-                # Display stock information as a dataframe
-                stock_info = [
-                    ("Stock Info", "Value"),
-                    ("Country", info.get('country', 'N/A')),
-                    ("Sector", info.get('sector', 'N/A')),
-                    ("Industry", info.get('industry', 'N/A')),
-                    ("Market Cap", format_value(info.get('marketCap'))),
-                    ("Enterprise Value", format_value( info.get('enterpriseValue'))),
-                    ("Employees", info.get('fullTimeEmployees', 'N/A'))
-                ]
+                # Add a new prediction row
+                from datetime import datetime
                 
-                df = pd.DataFrame(stock_info[1:], columns=stock_info[0]).astype(str)
-                col1.dataframe(df, width=400, hide_index=True)
+                # Load model
+                model, cdl_labels = load_model()
                 
-                # Display price information as a dataframe
-                price_info = [
-                    ("Price Info", "Value"),
-                    ("Current Price", safe_format(info.get('currentPrice'), fmt="${:.2f}")),
-                    ("Previous Close", safe_format(info.get('previousClose'), fmt="${:.2f}")),
-                    ("Day High", safe_format(info.get('dayHigh'), fmt="${:.2f}")),
-                    ("Day Low", safe_format(info.get('dayLow'), fmt="${:.2f}")),
-                    ("52 Week High", safe_format(info.get('fiftyTwoWeekHigh'), fmt="${:.2f}")),
-                    ("52 Week Low", safe_format(info.get('fiftyTwoWeekLow'), fmt="${:.2f}"))
-                ]
-                
-                df = pd.DataFrame(price_info[1:], columns=price_info[0]).astype(str)
-                col2.dataframe(df, width=400, hide_index=True)
-
-                # Display business metrics as a dataframe
-                biz_metrics = [
-                    ("Business Metrics", "Value"),
-                    ("EPS (FWD)", safe_format(info.get('forwardEps'))),
-                    ("P/E (FWD)", safe_format(info.get('forwardPE'))),
-                    ("PEG Ratio", safe_format(info.get('pegRatio'))),
-                    ("Div Rate (FWD)", safe_format(info.get('dividendRate'), fmt="${:.2f}")),
-                    ("Div Yield (FWD)", safe_format(info.get('dividendYield'), fmt="{:.2f}%") if info.get('dividendYield') else 'N/A'),
-                    ("Recommendation", info.get('recommendationKey', 'N/A').capitalize())
-                ]
-                
-                df = pd.DataFrame(biz_metrics[1:], columns=biz_metrics[0]).astype(str)
-                col3.dataframe(df, width=400, hide_index=True)
-
-                # Display earnings moves for last 12 quarters
-                earnings = stock.get_earnings_dates(limit=12)
-                history = stock.history(period="3y")
-                
-                results = []
-                for idx, row in earnings.iterrows():
-                    earnings_date = pd.to_datetime(idx).date()
-                    raw_time = row.get("Time", "")
-                    time_of_day = raw_time.lower() if isinstance(raw_time, str) else "pm"  # default to pm
-
-                    try:
-                        if time_of_day == "am":
-                            trading_day = get_same_or_next_trading_day(history, idx)
-                            prev_day = history.index[history.index < trading_day][-1]
+                if model:
+                    # Generate image for prediction
+                    img = generate_prediction_image(history)
+                    
+                    # Preprocess image for model
+                    img_array = np.array(img, dtype=np.float32) / 255.0
+                    img_batch = np.expand_dims(img_array, axis=0) # Add batch dimension
+                    
+                    # Run prediction
+                    predictions = model.predict(img_batch)
+                    cdl_pred, price_pred = predictions
+                    
+                    # Process CDL patterns (threshold 0.5)
+                    detected_patterns_indices = np.where(cdl_pred[0] > 0.5)[0]
+                    if len(detected_patterns_indices) > 0:
+                        detected_patterns = [cdl_labels[i] for i in detected_patterns_indices]
+                        patterns_str = ", ".join(detected_patterns)
+                    else:
+                        patterns_str = "None"
+                        
+                    # Process Price Directions
+                    # Output: [next1_up, next1_down, next5_up, next5_down, next30_up, next30_down]
+                    def get_direction(up_prob, down_prob):
+                        if up_prob > down_prob and up_prob > 0.5:
+                            return "Up"
+                        elif down_prob > up_prob and down_prob > 0.5:
+                            return "Down"
                         else:
-                            trading_day = get_next_trading_day(history, idx)
-                            prev_day = history.index[history.index < idx][-1]
-
-                        prev_close = history.loc[prev_day]["Close"]
-                        next_close = history.loc[trading_day]["Close"]
-                        pct_change = ((next_close - prev_close) / prev_close) * 100
-
-                        results.append({
-                            "Earnings Date": earnings_date,
-                            "Price Date": trading_day.date(),
-                            "Close % Change": f"{pct_change:.2f}%"
-                        })
-
-                    except Exception:
-                        results.append({
-                            "Earnings Date": earnings_date,
-                            "Price Date": None,
-                            "Close % Change": None
-                        })
-
-                df = pd.DataFrame(results)
-                df = df.dropna()
-
-                col1, col2 = st.columns([1, 2])
-                with col1:
-                    df_display = df.copy()
-                    df_display["Close % Change"] = df_display["Close % Change"].apply(
-                        lambda x: f"{float(str(x).replace('%', '')):.2f}%" if pd.notnull(x) else "N/A"
-                    )
-                    st.dataframe(df_display, width=400, height=450, hide_index=True)
-
-                with col2:
-                    chart_data = df.copy()
-                    chart_data["Earnings Date"] = chart_data["Earnings Date"].astype(str)
-                    chart_data = chart_data[chart_data["Close % Change"] != "N/A"].copy()
-                    chart_data["Close % Change"] = (
-                        chart_data["Close % Change"].str.replace("%","").astype(float)
-                    )
-
-                    chart = alt.Chart(chart_data).mark_bar().encode(
-                        x=alt.X("Earnings Date:N", sort="ascending"),
-                        y=alt.Y("Close % Change:Q"),
-                        color=alt.condition(
-                            alt.datum["Close % Change"] > 0,
-                            alt.value("green"),
-                            alt.value("red")
-                        ),
-                        tooltip=["Earnings Date", "Price Date", alt.Tooltip("Close % Change", format=".2f")]
-                    ).properties(width="container", height=450)
-
-                    st.altair_chart(chart, use_container_width=True)
+                            return "Neutral"
+                            
+                    t1_pred = get_direction(price_pred[0][0], price_pred[0][1])
+                    t5_pred = get_direction(price_pred[0][2], price_pred[0][3])
+                    t30_pred = get_direction(price_pred[0][4], price_pred[0][5])
+                    
+                    # Create data for new prediction
+                    new_prediction = {
+                        "Ticker": ticker,
+                        "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "Identified Candlestick Patterns": patterns_str,
+                        "t+1 Prediction": t1_pred,
+                        "t+5 Prediction": t5_pred,
+                        "t+30 Prediction": t30_pred,
+                        "t+1 Result": "",
+                        "t+5 Result": "",
+                        "t+30 Result": ""
+                    }
+                else:
+                    st.error("Model could not be loaded. Using dummy data.")
+                    # Fallback to dummy data if model fails
+                    import random
+                    new_prediction = {
+                        "Ticker": ticker,
+                        "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "Identified Candlestick Patterns": "Error",
+                        "t+1 Prediction": "Error",
+                        "t+5 Prediction": "Error",
+                        "t+30 Prediction": "Error",
+                        "t+1 Result": "",
+                        "t+5 Result": "",
+                        "t+30 Result": ""
+                    }
+                
+                # Add new prediction at the beginning of the list (newest first)
+                st.session_state.predictions.insert(0, new_prediction)
+                
+                # Display predictions table
+                st.subheader("Predictions")
+                if st.session_state.predictions:
+                    predictions_df = pd.DataFrame(st.session_state.predictions)
+                    st.dataframe(predictions_df, use_container_width=True, hide_index=True)
+                else:
+                    st.info("No predictions yet. Click Submit or Refresh to generate predictions.")
 
         except Exception as e:
             st.exception(f"An error occurred: {e}")
+
