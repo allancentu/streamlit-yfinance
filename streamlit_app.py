@@ -722,9 +722,6 @@ if 'first_run' not in st.session_state:
 
 if st.session_state.first_run:
     st.session_state.first_run = False
-    # Initialize ticker_input
-    st.session_state.ticker_input = 'AAPL'
-    st.session_state.ticker = 'AAPL'
     with st.spinner('Performing initial analysis for AAPL...', show_time=True):
         process_ticker('AAPL', render_chart=True)
 
