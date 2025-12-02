@@ -687,6 +687,12 @@ def process_ticker(ticker, render_chart=True):
 st.title("Financial Analysis")
 
 # Ticker input and buttons in the main area
+# Callback for Feeling Lucky
+def set_lucky_ticker():
+    if TOP_30_STOCKS:
+        st.session_state.ticker_input = TOP_30_STOCKS[0]
+        st.session_state.ticker = TOP_30_STOCKS[0]
+
 # Ticker input and buttons in the main area
 # Use a form to prevent double-submission/race conditions
 with st.form(key='analysis_form'):
@@ -703,7 +709,7 @@ with st.form(key='analysis_form'):
         submitted = st.form_submit_button("Submit", use_container_width=True)
         
     with col_lucky:
-        lucky_submitted = st.form_submit_button("Feeling Lucky", use_container_width=True)
+        lucky_submitted = st.form_submit_button("Feeling Lucky", use_container_width=True, on_click=set_lucky_ticker)
 
 # Handle form submission
 if submitted:
@@ -729,9 +735,9 @@ if st.session_state.first_run:
 if lucky_submitted:
     # Use the first stock in the list for the chart
     first_ticker = TOP_30_STOCKS[0]
-    st.session_state.ticker = first_ticker 
-    # Update the widget state for next run
-    st.session_state.ticker_input = first_ticker
+    # st.session_state.ticker and ticker_input are already updated by callback
+    
+    # Progress bar and status
     
     # Progress bar and status
     progress_bar = st.progress(0)
