@@ -21,85 +21,32 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_sc
 # To avoid running that code, it's safer to copy the do_network function here or wrap it in stock_cnn.py
 # Given the constraints, I will copy the necessary parts of do_network here to ensure stability.
 
-def do_network(cdl_columns, dropout_rate=0.35):
-    """
-    Cria um modelo de saída dupla para análise de padrões de candlestick.
-    Copied from stock_cnn.py to avoid side effects on import.
-    """
-    num_cdl_patterns = len(cdl_columns)
-    
-    inputs = tf.keras.layers.Input(shape=(128,128,3), name='input_image')
 
-    # Bloco 1: 32 filtros
-    c1 = tf.keras.layers.Conv2D(32, 3, padding='same', activation='relu')(inputs)
-    c1 = tf.keras.layers.BatchNormalization()(c1)
-    c1 = tf.keras.layers.Conv2D(32, 3, padding='same', activation='relu')(c1)
-    s2 = tf.keras.layers.MaxPool2D(pool_size=(2, 2))(c1)
-    s2 = tf.keras.layers.Dropout(dropout_rate)(s2)
-
-    # Bloco 2: 64 filtros
-    c3 = tf.keras.layers.Conv2D(64, 3, padding='same', activation='relu')(s2)
-    c3 = tf.keras.layers.BatchNormalization()(c3)
-    c3 = tf.keras.layers.Conv2D(64, 3, padding='same', activation='relu')(c3)
-    s4 = tf.keras.layers.MaxPool2D(pool_size=(2, 2))(c3)
-    s4 = tf.keras.layers.Dropout(dropout_rate)(s4)
-
-    # Bloco 3: 128 filtros
-    c5 = tf.keras.layers.Conv2D(128, 3, padding='same', activation='relu')(s4)
-    c5 = tf.keras.layers.BatchNormalization()(c5)
-    c5 = tf.keras.layers.Conv2D(128, 3, padding='same', activation='relu')(c5)
-    s6 = tf.keras.layers.MaxPool2D(pool_size=(2, 2))(c5)
-    s6 = tf.keras.layers.Dropout(dropout_rate)(s6)
-
-    # Achata características da CNN
-    flat = tf.keras.layers.Flatten()(s6)
-
-    # Camadas densas para processamento de características
-    f7 = tf.keras.layers.Dense(256, activation='relu')(flat)
-    f7 = tf.keras.layers.BatchNormalization()(f7)
-    f7 = tf.keras.layers.Dropout(dropout_rate)(f7)
-    f8 = tf.keras.layers.Dense(128, activation='relu')(f7)
-    f8 = tf.keras.layers.BatchNormalization()(f8)
-    f8 = tf.keras.layers.Dropout(dropout_rate)(f8)
-
-    # Saída 1: Predições de Padrões CDL
-    cdl_patterns = tf.keras.layers.Dense(
-        num_cdl_patterns,
-        activation='sigmoid',
-        name='cdl_patterns'
-    )(f8)
-
-    # Cabeça MLP: Predições de Direção de Preço
-    mlp_hidden = tf.keras.layers.Dense(128, activation='relu')(cdl_patterns)
-    mlp_hidden = tf.keras.layers.BatchNormalization()(mlp_hidden)
-    mlp_hidden = tf.keras.layers.Dropout(dropout_rate)(mlp_hidden)
-
-    # Saída 2: Predições de Direção de Preço
-    price_directions = tf.keras.layers.Dense(
-        6,
-        activation='sigmoid',
-        name='price_directions'
-    )(mlp_hidden)
-
-    return tf.keras.models.Model(
-        inputs=inputs,
-        outputs=[cdl_patterns, price_directions],
-        name='cnn_mlp_dual_output'
-    )
 
 @st.cache_resource
 def load_model():
-    """Load the trained model with weights."""
-    # Dummy columns to define architecture (assuming 20 patterns as per default)
-    # We label them generically since we don't have the original metadata
-    dummy_cdl_columns = [f"Pattern_{i}" for i in range(20)]
+    """Load the trained model."""
+    # Define the 10 CDL patterns used in the model with human-readable names
+    # Order MUST match the training data/model output order
+    cdl_labels = [
+        "Piercing Pattern",                 # 1. CDLPIERCING
+        "Morning Doji Star",                # 2. CDLMORNINGDOJISTAR
+        "Up/Down-gap Side-by-Side White",   # 3. CDLGAPSIDESIDEWHITE
+        "Advance Block",                    # 4. CDLADVANCEBLOCK
+        "Upside Gap Two Crows",             # 5. CDLUPSIDEGAP2CROWS
+        "Counterattack",                    # 6. CDLCOUNTERATTACK
+        "Three Inside Up/Down",             # 7. CDL3INSIDE
+        "Modified Hikkake Pattern",         # 8. CDLHIKKAKEMOD
+        "Tasuki Gap",                       # 9. CDLTASUKIGAP
+        "Stalled Pattern"                   # 10. CDLSTALLEDPATTERN
+    ]
     
-    model = do_network(dummy_cdl_columns)
     try:
-        model.load_weights('model/best_model.weights.h5')
-        return model, dummy_cdl_columns
+        # Load the full model directly
+        model = tf.keras.models.load_model('model/best_cnn_model.keras')
+        return model, cdl_labels
     except Exception as e:
-        st.error(f"Failed to load model weights: {e}")
+        st.error(f"Failed to load model: {e}")
         return None, None
 
 def generate_prediction_image(data):
